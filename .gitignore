@@ -1,0 +1,20 @@
+## .NET Core / Visual Studio
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## WiX / Output
+*.wixpdb
+publish/
+installer/*.wixpdb
+
+## Test Results
+TestResults/
+*.trx
+*.coverage
