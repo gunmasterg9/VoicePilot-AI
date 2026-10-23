@@ -1,0 +1,8 @@
+PySide6
+psutil
+pyautogui
+pygetwindow
+SpeechRecognition
+pyaudio
+pyttsx3
+edge-tts

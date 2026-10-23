@@ -1,224 +1,160 @@
-# VoicePilot AI - Native Windows Desktop Voice Assistant
+# NEO AI — Your Local AI PC Assistant
 
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%20Windows%2011-0078D6?logo=windows)](https://microsoft.com/windows)
-[![Framework](https://img.shields.io/badge/Framework-.NET%209%20LTS-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![UI](https://img.shields.io/badge/UI-WPF%20Fluent%20Design-00D2FF)](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/)
-[![Installer](https://img.shields.io/badge/Installer-WiX%207%20MSI-10B981)](https://wixtoolset.org/)
-[![License](https://img.shields.io/badge/License-MIT-purple)](#)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Platform Windows](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://www.microsoft.com/windows)
+[![UI PySide6](https://img.shields.io/badge/UI-PySide6%20Qt6-41CD52.svg)](https://pypi.org/project/PySide6/)
+[![Voice Faster--Whisper](https://img.shields.io/badge/ASR-Faster--Whisper-orange.svg)](https://github.com/SYSTRAN/faster-whisper)
+[![TTS Neural%20+%20SAPI](https://img.shields.io/badge/TTS-Neural%20%7C%20SAPI5-purple.svg)](https://github.com/rany2/edge-tts)
 
-**VoicePilot AI** is a genuine, high-performance native Windows PC desktop voice assistant engineered in C# on .NET 9 using Windows Presentation Foundation (WPF) with modern Fluent-inspired dark ergonomics.
+**NEO AI** (formerly ORION) is an advanced, offline-first, local AI PC assistant engineered specifically for Windows desktops. Built with Python 3.12 and PySide6, NEO combines local speech recognition (Faster-Whisper), dynamic local LLMs (Ollama), natural neural and offline SAPI5 text-to-speech, and secure desktop automation.
 
-It is **NOT** a website, browser wrapper, Electron app, Tauri app, or WebView shell. It runs as a true compiled Windows executable (`VoicePilot.exe`), integrates directly with Win32 APIs, P/Invoke, and Windows Multimedia, and operates with local privacy-first architecture.
-
----
-
-## 🌟 Key Features
-
-- **Microphone & Push-to-Talk**: One-click microphone toggle, push-to-talk, and configurable global hotkeys (default: `Ctrl+Win+Space`).
-- **Real-Time Voice Waveform Visualizer**: Smooth native WPF audio visualizer rendering dynamic sound bars matching real microphone audio input levels.
-- **Live Speech Transcription**: Displays instantaneous partial speech hypotheses as you speak and commits finalized transcripts.
-- **Controlled PC Automation (Zero Shell Injection)**:
-  - **Launch Approved Applications**: Safely launches apps like Notepad, Calculator, Edge, Chrome, Task Manager, Windows Terminal, and custom allowlisted executables.
-  - **Open Authorized Paths**: Opens approved directories (Documents, Downloads, Desktop, Pictures, Music) in File Explorer with path traversal protection.
-  - **Search Local Files**: Fast, non-blocking file search within approved user folders.
-  - **Date & Time Readout**: Speaks and formats current local time, date, and day of week.
-  - **System Controls**: Workstation lock (`LockWorkStation` Win32 API), audio mute toggle, and battery status.
-  - **Web Search**: Safe URL-encoded web queries via default browser.
-  - **Clipboard Support**: Read and copy text to the Windows clipboard safely.
-- **Confirmation Gate for Sensitive Actions**: Destructive actions (such as file deletion or sensitive file operations) are gated behind an interactive confirmation card requiring explicit user approval before execution.
-- **Local AI & Multi-Engine Intent Processing**:
-  - **Tier 1 (Instant Offline Rule Engine)**: Deterministic, zero-latency keyword and regex matcher working 100% offline with no model dependencies.
-  - **Tier 2 (Local Ollama LLM Engine)**: Connects to local Ollama (`http://localhost:11434`, e.g., `llama3.2`) using structured JSON function calling with strict schema validation. Automatically falls back to Tier 1 if Ollama is offline.
-- **Privacy First**:
-  - Microphone audio and conversation transcripts remain strictly local to your machine.
-  - Sensitive tokens, API keys, passwords, and personal identity data are automatically redacted from logs.
-  - Easy button to view, manage, and clear locally stored conversation history.
-- **Background Tray Operation**:
-  - Minimizes smoothly to the Windows System Notification Area (System Tray).
-  - Context menu with quick actions ("Open VoicePilot", "Start Listening", "Stop Listening", "Settings", "Exit").
-- **Managed Extension Plugin Architecture**:
-  - Discover and load managed .NET assemblies (`IPlugin`) inside isolated `AssemblyLoadContext` sandboxes.
-  - Includes a working sample plugin (`VoicePilot.Plugins.Sample`) providing weather simulation, quick voice note-taking, and system diagnostics.
-- **Professional Windows Installer**:
-  - Generates a versioned Windows Installer (`VoicePilot-Setup-1.0.0.msi`) built with WiX 7, creating Desktop and Start Menu shortcuts and registering uninstallation in Windows Settings.
+> **Original Creator & Attribution**: Created by **Eshan Maity**. Upgraded to NEO AI architecture while preserving historical attribution and module compatibility.
 
 ---
 
-## 🏛 Architecture Overview
+## Key Features & Architecture
 
-```
-VoicePilot.sln
-│
-├── src/
-│   ├── VoicePilot.Sdk/             # Public plugin contracts & data models (IPlugin, IActionDefinition, ActionResult)
-│   ├── VoicePilot.Core/            # Core engine, audio abstractions, security allowlists, intent parsing, storage
-│   │   ├── Audio/                  # ISpeechRecognitionService, SapiSpeechRecognitionService, WhisperSpeechRecognitionService
-│   │   ├── Synthesis/              # ISpeechSynthesisService, SapiSpeechSynthesisService
-│   │   ├── Automation/             # IAction, ActionRegistry, ActionExecutor, typed actions
-│   │   │   └── Actions/            # DateTimeAction, LaunchAppAction, OpenPathAction, SearchFilesAction,
-│   │   │                           # SystemControlAction, WebSearchAction, ClipboardAction, DeleteFileAction
-│   │   ├── Security/               # PathSecurityValidator, AppAllowlistValidator, SensitiveDataMasker
-│   │   ├── Intent/                 # IIntentParser, RuleBasedIntentParser, IntentResult
-│   │   ├── Llm/                    # ILanguageModelService, OllamaLanguageModelService
-│   │   ├── Configuration/          # AppSettings, SettingsManager
-│   │   ├── Storage/                # IConversationHistoryStore, JsonConversationHistoryStore
-│   │   ├── Plugins/                # PluginLoader, PluginContext, PluginActionWrapper
-│   │   └── Interop/                # NativeMethods (RegisterHotKey, LockWorkStation, WM_APPCOMMAND)
-│   │
-│   ├── VoicePilot.App/             # Native WPF Application executable (Fluent UI, MVVM)
-│   │   ├── Controls/               # WaveformVisualizer (dynamic audio bars)
-│   │   ├── Styles/                 # FluentTheme.xaml (modern dark Fluent design tokens)
-│   │   ├── ViewModels/             # MainViewModel, SettingsViewModel, ConversationBubbleViewModel
-│   │   ├── Views/                  # MainWindow.xaml, SettingsWindow.xaml
-│   │   ├── Services/               # GlobalHotkeyService, TrayIconService
-│   │   └── App.xaml                # DI container setup & application bootstrapper
-│   │
-│   ├── VoicePilot.Plugins.Sample/  # Demonstrator plugin (sample.weather, sample.note, sample.diagnostics)
-│   └── VoicePilot.Installer/       # WiX 7 Packaging definition (Package.wxs)
-│
-├── tests/
-│   └── VoicePilot.Tests/           # 25 Automated unit and integration tests
-│
-├── build.ps1                       # Automated build & test execution script
-└── publish.ps1                     # Automated self-contained publish & WiX MSI compilation script
-```
+### 1. Animated CoreOrb Desktop UI
+- **5-State Visual Pulse Engine**: Dynamic visual feedback for `READY`, `LISTENING`, `THINKING`, `SPEAKING`, and `ERROR` states.
+- **Dedicated Controls**:
+  - `◉ VOICE`: One-click speech recording and transcription.
+  - `EXECUTE`: Instant keyboard command submission.
+  - `🔊 TEST TTS`: Live audio playback verification.
+  - `⏹ STOP`: Instant halt of speech synthesis and cancellation of active operations.
+  - `⚙ SETTINGS`: Full diagnostic and configuration modal.
+- **Scrollable Transcript Console**: Rich, styled conversation log with user inputs and assistant responses.
+- **Live Hardware Telemetry**: Active LLM model, active TTS provider, voice state, and memory status.
+
+### 2. Dual-Engine Speech Synthesis (TTS)
+- **Online Neural TTS**: High-fidelity natural speech powered by Microsoft Edge Neural voices (supports English, Hindi, and Gujarati) with zero API keys required.
+- **Offline SAPI5 Fallback**: Guaranteed audio output via native Windows SAPI voices even when disconnected from the internet.
+- **Thread-Safe & Overlap Prevention**: Queues and playback locks prevent stuttering or overlapping voices.
+- **Instant Interruption**: User can click `⏹ STOP` to immediately cut off speech playback.
+
+### 3. Speech Recognition (ASR)
+- **Local Faster-Whisper**: Runs quantized CPU int8 Whisper models (`tiny.en`, `base`, etc.) offline.
+- **Audio Pipeline**: Real-time microphone capture via `sounddevice` and `SpeechRecognition` with direct float32 streaming.
+- **Multi-language Ready**: Pre-configured voice and recognition support for English (`en`), Hindi (`hi`), and Gujarati (`gu`).
+
+### 4. Dynamic LLM Brain & Provider Architecture
+- **Local Ollama Integration**: Automatically polls `http://127.0.0.1:11434/api/tags` to discover installed models. Auto-selects lightweight models (e.g., `qwen3:1.7b`) optimized for 8 GB RAM machines.
+- **Optional Cloud Provider**: OpenAI-compatible adapter available for cloud LLM endpoints.
+- **Offline Fallback Engine**: Core system operations, time/date, application launching, hardware diagnostics, and navigation work even if the LLM is temporarily unreachable.
+
+### 5. Secure PC Automation
+- **System Root Guard**: Strict allowlists block destructive file actions against `C:\`, `C:\Windows`, `C:\Program Files`, and user accounts roots.
+- **Confirmation Prompts**: Sensitive operations (`delete_path`, `shutdown_pc`, `restart_pc`) prompt the user with modal dialogs before execution.
+- **Auditable Tool Registry**: Validated execution of applications, window management, and web navigation.
 
 ---
 
-## 🚀 Quick Start
+## Installation & Setup
 
 ### Prerequisites
-- Windows 10 (Build 19041+) or Windows 11 (x64)
-- [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
-- WiX Toolset 7 (Automatically installed via `dotnet tool install --global wix` if needed)
+- **Operating System**: Windows 10 or Windows 11 (64-bit)
+- **Python**: Python 3.10, 3.11, or 3.12 (Python 3.12 recommended)
+- **Ollama**: (Optional for local LLM brain) [Download Ollama for Windows](https://ollama.com/download)
 
-### Build and Run
-
+### 1. Clone & Setup Virtual Environment
 ```powershell
-# 1. Clone repository and navigate to folder
+git clone <repo-url> "VoicePilot AI"
 cd "VoicePilot AI"
 
-# 2. Build solution and run automated test suite (25 tests)
-.\build.ps1
-
-# 3. Launch the native WPF desktop application
-dotnet run --project src/VoicePilot.App
+# Create virtual environment
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
-### Self-Contained Publishing & Windows Installer Creation
+### 2. Install Dependencies
+```powershell
+pip install -r requirements.txt
+```
+
+### 3. Setup Ollama (Recommended)
+```powershell
+# Pull a fast, lightweight model for 8 GB RAM systems
+ollama pull qwen3:1.7b
+```
+
+---
+
+## Launching NEO AI
+
+### Option A: Desktop Double-Click Launcher
+Double-click `launch_neo.bat` (or legacy `launch_orion.bat`).
+
+### Option B: Terminal Command
+```powershell
+# Launch PySide6 GUI (Default)
+python main.py --mode ui
+
+# Launch Terminal CLI Mode
+python main.py --mode terminal
+
+# Launch REST/HTTP API Server
+python main.py --mode api
+```
+
+---
+
+## Voice Commands Tested & Supported
+
+NEO AI has been verified against 20 core PC automation and conversational commands:
+
+| # | Command | Category | Expected Response |
+|---|---------|----------|-------------------|
+| 01 | `who are you` | Identity | "My name is NEO. I am your local AI PC assistant..." |
+| 02 | `who created you` | Attribution | "I was created by Eshan Maity." |
+| 03 | `what can you do` | Capabilities | Capabilities overview and available modules |
+| 04 | `what is your name` | Identity | "My name is NEO..." |
+| 05 | `what time is it` | System API | Real-time system clock (e.g., "05:15 PM") |
+| 06 | `what is today's date` | System API | Real-time calendar date |
+| 07 | `check cpu usage` | Telemetry | Current CPU % load |
+| 08 | `how much memory is used` | Telemetry | RAM usage percentage and GB breakdown |
+| 09 | `check battery and system status` | Telemetry | Battery % and hardware health check |
+| 10 | `open notepad` | App Launcher | Launches Windows Notepad (`notepad.exe`) |
+| 11 | `open calculator` | App Launcher | Launches Windows Calculator (`calc.exe`) |
+| 12 | `open file explorer` | App Launcher | Opens Windows File Explorer |
+| 13 | `open command prompt` | App Launcher | Launches Command Prompt (`cmd.exe`) |
+| 14 | `open google` | Web Navigation | Opens Google in default web browser |
+| 15 | `open youtube` | Web Navigation | Opens YouTube in default web browser |
+| 16 | `open github` | Web Navigation | Opens GitHub in default web browser |
+| 17 | `open wikipedia` | Web Navigation | Opens Wikipedia in default web browser |
+| 18 | `search for python documentation` | Web Search | Searches Google for specified query |
+| 19 | `test your audio playback` | Diagnostics | Speaks: "NEO audio playback is operational..." |
+| 20 | `tell me a joke` | Conversational | Delivers developer humor |
+
+---
+
+## Running Automated Tests
+
+Run the complete test suite anytime to verify system stability:
 
 ```powershell
-# Runs self-contained win-x64 compilation and builds the WiX 7 MSI installer
-.\publish.ps1
+# Phase 1 Voice Commands & Pipeline Test (7 tests)
+python -m unittest tests.test_phase1_voice_commands
+
+# Comprehensive NEO AI Architecture & Security Test (17 tests)
+python -m unittest tests.test_neo_ai
 ```
 
-Generated deliverables:
-- **Standalone Executable**: `publish\win-x64\VoicePilot.exe`
-- **Windows MSI Installer**: `installer\VoicePilot-Setup-1.0.0.msi` (61.6 MB, self-contained)
+---
+
+## Settings & Diagnostics Modal
+
+Clicking `⚙ SETTINGS` opens the central configuration manager:
+- **AI Brain Tab**: Switch between Ollama and Cloud providers, pick active Ollama models with live refresh, configure model timeouts.
+- **Voice & Audio Tab**: Select audio input devices, choose Speech Recognition models (`tiny.en`, `base`, `small`), configure online neural voices (`Aria`, `Guy`, `Swara`, `Dhwani`), and run live mic & speaker tests.
+- **Diagnostics Tab**: Inspect memory, CPU load, Ollama connection status, and installed dependencies in real time.
 
 ---
 
-## 🎙 Speech & AI Setup Instructions
+## Backward Compatibility Notice
 
-### 1. Speech Recognition (STT)
-VoicePilot includes two local STT providers:
-1. **Windows Desktop SAPI (Default)**:
-   - Works immediately out of the box with zero downloads on every Windows 10/11 system.
-   - Includes real-time dictation and command grammars with audio amplitude event reporting.
-2. **Local Whisper.net (GGML)**:
-   - Size: ~75 MB (`ggml-tiny.bin`).
-   - License: MIT License (OpenAI / whisper.cpp).
-   - Storage Location: `%LOCALAPPDATA%\VoicePilot\Models\ggml-tiny.bin`.
-   - Setup: Open **Settings** in VoicePilot and click **Download Whisper Model**, or download manually from [HuggingFace whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin) and place it into `%LOCALAPPDATA%\VoicePilot\Models\`.
-
-### 2. Speech Synthesis (TTS)
-- Uses native Windows SAPI voices (`Microsoft David`, `Microsoft Zira`, `Microsoft Mark`, or any installed Windows OneCore voice).
-- Configurable speech rate (-10 to 10) and volume (0 to 100) from the Settings window.
-- Instant cancellation support when the user pushes the microphone button to interrupt.
-
-### 3. Optional Local LLM (Ollama)
-- Built-in deterministic commands work 100% offline without an LLM.
-- To enable natural language understanding via local LLM:
-  1. Install [Ollama for Windows](https://ollama.com/download).
-  2. Pull your preferred model:
-     ```powershell
-     ollama run llama3.2
-     ```
-  3. In VoicePilot **Settings**, check **Enable Ollama LLM intent parsing**.
-  4. Test the connection using the **Test Ollama Connection** button.
-  5. VoicePilot prompts Ollama to produce strict typed JSON mapped to allowlisted actions. If Ollama is offline or returns an invalid action, VoicePilot gracefully falls back to the local rule engine.
-
----
-
-## 🛡 Security & Privacy Architecture
-
-1. **Zero Shell Execution**: VoicePilot **never** passes arbitrary user or LLM strings to `cmd.exe` or `powershell.exe`. Requests are parsed into strictly typed `IAction` instances with validated arguments.
-2. **Path Security Validator**: Prohibits access to Windows system directories (`C:\Windows`, `System32`, `Program Files`, root volume paths) and blocks directory traversal (`..`).
-3. **Application Allowlist**: Launches only known productivity applications or user-approved executables. Blocks script hosts (`wscript`, `cscript`, `mshta`, `regedit`, `certutil`).
-4. **Sensitive Action Confirmation Gate**: High-risk actions like `system.delete_file` present a confirmation card requiring explicit user clicking before deletion.
-5. **Sensitive Data Masking**: Automatically masks API keys, secrets, passwords, and personal credentials in log streams.
-6. **Local Conversation Storage**: Conversation history is persisted to `%LOCALAPPDATA%\VoicePilot\history.json`. Users can view the file or clear all history with a single click.
-
----
-
-## 🧩 Plugin Architecture
-
-Developers can create extension assemblies implementing `VoicePilot.Sdk.IPlugin`:
-
-```csharp
-using VoicePilot.Sdk;
-
-public class MyCustomPlugin : IPlugin
-{
-    public string Id => "com.example.myplugin";
-    public string Name => "Custom Tools Plugin";
-    public string Version => "1.0.0";
-    public string Description => "Sample custom plugin";
-    public string Author => "Developer";
-
-    public Task InitializeAsync(IPluginContext context, CancellationToken ct = default)
-    {
-        context.LogInfo("Initialized!");
-        return Task.CompletedTask;
-    }
-
-    public IReadOnlyList<IActionDefinition> GetActions() => new[]
-    {
-        new ActionDefinition
-        {
-            Name = "tools.myaction",
-            Description = "Executes custom logic",
-            Parameters = new ActionParameterDefinition[] { ... }
-        }
-    };
-
-    public Task<ActionResult> ExecuteActionAsync(string actionName, IReadOnlyDictionary<string, object?> parameters, CancellationToken ct = default)
-    {
-        return Task.FromResult(ActionResult.Ok("Executed successfully!"));
-    }
-
-    public Task ShutdownAsync(CancellationToken ct = default) => Task.CompletedTask;
-}
-```
-
-Place compiled plugin `.dll` files in `%APPDATA%\VoicePilot\Plugins\`. The host validates directory safety and loads plugins into isolated `AssemblyLoadContext` domains.
-
----
-
-## 🧪 Test Suite
-
-Run all automated unit and integration tests:
-
-```powershell
-dotnet test tests/VoicePilot.Tests/VoicePilot.Tests.csproj --logger "console;verbosity=normal"
-```
-
-Tested scenarios (25 tests):
-- Redaction of API keys and passwords via `SensitiveDataMasker`
-- Enforcement of path traversal rejection and restricted Windows folders in `PathSecurityValidator`
-- Verification of allowed application aliases and rejection of blocked binaries in `AppAllowlistValidator`
-- Intent parsing for date/time, app launches, folder navigation, file search, system controls, and clipboard
-- Confirmation gating enforcement in `ActionExecutor`
-- Thread-safe conversation history storage, capping, and clearing
-- Dynamic plugin action execution and diagnostics reporting
-- End-to-end vertical slice integration pipeline (voice capture simulation -> pattern match -> action execution -> SAPI speech synthesis -> history persistence)
+For automated pipelines or existing user scripts configured for ORION:
+- `from core.agent import OrionAgent` continues to work (aliases `NeoAgent`).
+- `from ui.window import OrionWindow` continues to work (aliases `NeoWindow`).
+- `from interfaces.terminal import run_terminal` continues to work (aliases `run_neo_terminal`).
+- `from interfaces.api import OrionHandler, run_server` continue to work.
+- Existing settings files with `ORION_...` prefixes are automatically migrated without data loss.
+- `launch_orion.bat` seamlessly redirects to `launch_neo.bat`.
