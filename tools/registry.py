@@ -471,15 +471,21 @@ def execute_tool(
 
     # Permission check for destructive actions
     if requires_confirmation(tool_name):
-        if confirm_callback:
-            approved = confirm_callback(tool_name, arguments)
-            if not approved:
-                return ToolResult(
-                    success=False,
-                    output="",
-                    error="Action cancelled by user.",
-                    permission=ToolPermission.DESTRUCTIVE
-                )
+        if not confirm_callback:
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Destructive tool '{tool_name}' blocked: explicit user confirmation callback required.",
+                permission=ToolPermission.DESTRUCTIVE
+            )
+        approved = confirm_callback(tool_name, arguments)
+        if not approved:
+            return ToolResult(
+                success=False,
+                output="",
+                error="Action cancelled by user.",
+                permission=ToolPermission.DESTRUCTIVE
+            )
 
     # Use spec execution if available
     if spec:
@@ -488,9 +494,23 @@ def execute_tool(
     # Fallback to direct function call
     try:
         raw = func(**arguments)
+        out_str = str(raw).strip()
+        lower_out = out_str.lower()
+        failure_prefixes = (
+            "error", "failed", "safety refusal", "refusing to", "could not",
+            "access denied", "path does not exist", "source does not exist",
+            "destination already exists", "cannot find", "no valid", "action cancelled"
+        )
+        if any(lower_out.startswith(pfx) for pfx in failure_prefixes):
+            return ToolResult(
+                success=False,
+                output=out_str,
+                error=out_str,
+                permission=ToolPermission.REVERSIBLE
+            )
         return ToolResult(
             success=True,
-            output=str(raw),
+            output=out_str,
             permission=ToolPermission.REVERSIBLE
         )
     except Exception as exc:

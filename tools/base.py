@@ -105,10 +105,25 @@ class ToolSpec:
                     error=str(raw[1]) if not raw[0] else None,
                     permission=self.permission
                 )
+            out_str = str(raw).strip()
+            lower_out = out_str.lower()
+            failure_prefixes = (
+                "error", "failed", "safety refusal", "refusing to", "could not",
+                "access denied", "path does not exist", "source does not exist",
+                "destination already exists", "cannot find", "no valid", "action cancelled"
+            )
+            if any(lower_out.startswith(pfx) for pfx in failure_prefixes):
+                return ToolResult(
+                    success=False,
+                    output=out_str,
+                    error=out_str,
+                    permission=self.permission
+                )
+
             # Normal string return
             return ToolResult(
                 success=True,
-                output=str(raw),
+                output=out_str,
                 permission=self.permission
             )
         except Exception as exc:

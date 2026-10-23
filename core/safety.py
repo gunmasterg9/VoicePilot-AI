@@ -25,32 +25,63 @@ CRITICAL_ENV_VARS = [
 ]
 
 
+def normalize_safe_path(p_str: str) -> str:
+    """
+    Strips Windows extended device prefixes (\\\\?\\, \\\\.\\, \\??\\, UNC)
+    and normalizes slashes to prevent adversarial path filtering bypasses.
+    Preserves root trailing backslash for drive roots to prevent resolve() 
+    from interpreting them as drive-relative CWD paths.
+    """
+    s = str(p_str).replace("/", "\\").strip()
+    for unc_pfx in ("\\\\?\\unc\\", "\\\\.\\unc\\", "\\??\\unc\\"):
+        if s.lower().startswith(unc_pfx):
+            s = "\\\\" + s[len(unc_pfx):]
+            break
+    for pfx in ("\\\\?\\", "\\\\.\\", "\\??\\"):
+        if s.startswith(pfx):
+            s = s[len(pfx):]
+            break
+    # Drive root specification (e.g. C:, C:\, C:\\) must preserve trailing backslash
+    if len(s) >= 2 and s[1] == ":" and (len(s) == 2 or all(c == "\\" for c in s[2:])):
+        return s[:2].upper() + "\\"
+    # Naked root slash
+    if s and all(c == "\\" for c in s):
+        return "\\"
+    return s.rstrip("\\/")
+
+
 def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
     """
     Validates that a path is safe for deletion.
     Blocks deletion of Windows, Program Files, system drives, user roots, and system files.
+    Resistant to path traversal, symbolic links, alternate device paths, and extended-length prefixes.
     """
     try:
         if not path_str or not str(path_str).strip():
             return False, "Target path is empty."
 
-        p = Path(path_str).expanduser().resolve()
-        p_str = str(p).lower().rstrip("\\/")
+        clean_input = normalize_safe_path(path_str)
+        p = Path(clean_input).expanduser().resolve()
+        p_str = normalize_safe_path(str(p)).lower()
 
         # 0. Reject path traversal attempting to target protected directories or escape bounds
-        raw_parts = [part.lower() for part in Path(path_str).parts]
+        raw_parts = [part.lower() for part in Path(clean_input).parts]
         if ".." in raw_parts:
-            # Check if traversal references windows, system, or drive roots
-            if any(name in raw_parts for name in ["windows", "system32", "program files", "users"]):
+            if any(name in raw_parts for name in ["windows", "system32", "syswow64", "program files", "users"]):
                 return False, f"Refusing to delete path with unsafe directory traversal: {path_str}"
 
-        # 1. Protect drive root (e.g. C:\, D:\)
+        # 1. Protect drive root (e.g. C:, C:\, D:\, \\server\share)
+        drive, rest = os.path.splitdrive(p_str)
+        if drive and rest.strip("\\/") == "":
+            return False, f"Refusing to delete drive root: {p}"
         if len(p_str) <= 3 and ":" in p_str:
+            return False, f"Refusing to delete drive root: {p}"
+        if p == Path(p.anchor):
             return False, f"Refusing to delete drive root: {p}"
 
         # 2. Protect Windows accounts and user root (e.g. C:\Users, C:\Users\Username)
-        user_home = str(Path.home()).lower().rstrip("\\/")
-        user_parent = str(Path.home().parent).lower().rstrip("\\/")
+        user_home = normalize_safe_path(str(Path.home().resolve())).lower()
+        user_parent = normalize_safe_path(str(Path.home().parent.resolve())).lower()
 
         if p_str == user_parent:
             return False, f"Refusing to delete all-users root directory: {p}"
@@ -58,7 +89,7 @@ def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
             return False, f"Refusing to delete user profile root directory: {p}"
 
         # Protect any directory named 'windows', 'system32', 'program files', etc.
-        protected_directory_names = {"windows", "system32", "syswow64", "program files", "program files (x86)", "programdata"}
+        protected_directory_names = {"windows", "system32", "syswow64", "program files", "program files (x86)", "programdata", "users"}
         if p.name.lower() in protected_directory_names:
             return False, f"Refusing to delete protected system target name: {p}"
 
@@ -67,13 +98,14 @@ def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
         for var in CRITICAL_ENV_VARS:
             val = os.environ.get(var)
             if val:
-                critical_paths.append(str(Path(val).resolve()).lower().rstrip("\\/"))
+                critical_paths.append(normalize_safe_path(str(Path(val).resolve())).lower())
 
         # Fallback defaults if env vars missing
         default_crit = [r"c:\windows", r"c:\windows\system32", r"c:\program files", r"c:\program files (x86)"]
         for dc in default_crit:
-            if dc not in critical_paths:
-                critical_paths.append(dc)
+            cleaned_dc = normalize_safe_path(dc).lower()
+            if cleaned_dc not in critical_paths:
+                critical_paths.append(cleaned_dc)
 
         for crit in critical_paths:
             if p_str == crit or p_str.startswith(crit + "\\"):
@@ -121,16 +153,32 @@ def confirmation_message(tool_name: str, arguments: Optional[Dict] = None) -> st
 
 
 def mask_sensitive_data(text: str) -> str:
-    """Masks API keys, tokens, and credentials in logs and outputs."""
+    """Masks API keys, tokens, credentials, and passwords in logs and outputs."""
     if not text:
         return ""
     import re
     # Mask OpenAI-like keys (sk-...)
     masked = re.sub(r"sk-[A-Za-z0-9_\-]{8,}", "sk-***[MASKED]***", str(text))
+    # Mask Bearer tokens
+    masked = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]{8,}", "Bearer ***[MASKED]***", masked, flags=re.IGNORECASE)
     # Mask generic key/token/password assignments in json or query strings
     masked = re.sub(
-        r'("(?:api_key|cloud_api_key|token|password|secret)"\s*:\s*")[^"]+(")',
+        r'("(?:api_key|cloud_api_key|token|password|secret|auth_token)"\s*:\s*")[^"]+(")',
         r'\1***[MASKED]***\2',
+        masked,
+        flags=re.IGNORECASE
+    )
+    # Mask key/token assignments in python dict strings
+    masked = re.sub(
+        r"('(?:api_key|cloud_api_key|token|password|secret|auth_token)'\s*:\s*')[^']+(')",
+        r"\1***[MASKED]***\2",
+        masked,
+        flags=re.IGNORECASE
+    )
+    # Mask parameter assignments in command lines or URLs
+    masked = re.sub(
+        r'((?:api_key|apikey|token|password|secret)=)[^\s&"\']+',
+        r'\1***[MASKED]***',
         masked,
         flags=re.IGNORECASE
     )

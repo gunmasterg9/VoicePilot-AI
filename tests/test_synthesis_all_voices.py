@@ -3,10 +3,12 @@ import edge_tts
 import io
 import sys
 import soundfile as sf
+import pytest
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
 
+@pytest.mark.asyncio
 async def test_synthesis():
     test_cases = [
         ("en-US-AriaNeural", "Hello! NEO AI is operational and ready to assist you on your PC."),

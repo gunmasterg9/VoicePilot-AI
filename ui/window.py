@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
     QMessageBox
 )
 
+import html as html_lib
+from core.safety import mask_sensitive_data
 from core.agent import OrionAgent, NeoAgent
 from config import WINDOW_TITLE, APP_NAME, TAGLINE
 from interfaces.tts import tts_manager
@@ -363,6 +365,8 @@ class AgentWorker(QObject):
 
         self.agent = agent
         self.command = command
+        self.cancelled = False
+        self.op_id = 0
 
     @Slot()
     def run(self):
@@ -379,6 +383,9 @@ class AgentWorker(QObject):
                 )
             )
 
+            if getattr(self, "cancelled", False):
+                return
+
             self.finished.emit(
                 str(
                     response
@@ -387,6 +394,9 @@ class AgentWorker(QObject):
             )
 
         except Exception as exc:
+
+            if getattr(self, "cancelled", False):
+                return
 
             self.finished.emit(
                 f"NEO error: {exc}"
@@ -410,6 +420,8 @@ class VoiceWorker(QObject):
         super().__init__()
 
         self.agent = agent
+        self.cancelled = False
+        self.op_id = 0
 
     @Slot()
     def run(self):
@@ -436,6 +448,9 @@ class VoiceWorker(QObject):
                 voice.process_voice_command()
             )
 
+            if getattr(self, "cancelled", False):
+                return
+
             self.finished.emit(
                 str(
                     response
@@ -444,6 +459,9 @@ class VoiceWorker(QObject):
             )
 
         except Exception as exc:
+
+            if getattr(self, "cancelled", False):
+                return
 
             self.state.emit("ERROR")
             self.log.emit(f"NEO > Voice error: {exc}")
@@ -470,6 +488,8 @@ class TtsTestWorker(QObject):
         super().__init__()
 
         self.agent = agent
+        self.cancelled = False
+        self.op_id = 0
 
     @Slot()
     def run(self):
@@ -495,9 +515,16 @@ class TtsTestWorker(QObject):
             test_text = "NEO audio playback operational. Natural neural voice synthesis ready."
             self.log.emit("NEO > [TTS TEST] Speaking test audio...")
             voice.speak(test_text)
+
+            if getattr(self, "cancelled", False):
+                return
+
             self.finished.emit("Audio playback test completed.")
 
         except Exception as exc:
+
+            if getattr(self, "cancelled", False):
+                return
 
             self.state.emit("ERROR")
             self.log.emit(f"NEO > [TTS ERROR]: {exc}")
@@ -541,6 +568,8 @@ class OrionWindow(QMainWindow):
 
         self.tts_thread = None
         self.tts_worker = None
+
+        self._current_op_id = 0
 
         self.build_ui()
         self.apply_style()
@@ -996,26 +1025,29 @@ class OrionWindow(QMainWindow):
         message
     ):
 
-        msg_str = str(message).strip()
+        raw_msg = mask_sensitive_data(str(message)).strip()
 
-        if msg_str.startswith("YOU >"):
-            content = msg_str[5:].strip()
+        if raw_msg.startswith("YOU >"):
+            content = html_lib.escape(raw_msg[5:].strip())
             html = f"<div style='margin-bottom:6px;'><span style='color: #38bdf8; font-weight: bold;'>YOU &gt;</span> <span style='color: #f1f5f9;'>{content}</span></div>"
-        elif msg_str.startswith("NEO >"):
-            content = msg_str[5:].strip()
+        elif raw_msg.startswith("NEO >"):
+            content = html_lib.escape(raw_msg[5:].strip())
             html = f"<div style='margin-bottom:6px;'><span style='color: #00f5a0; font-weight: bold;'>NEO &gt;</span> <span style='color: #bbf7d0;'>{content}</span></div>"
-        elif msg_str.startswith("ORION >"):
-            content = msg_str[7:].strip()
+        elif raw_msg.startswith("ORION >"):
+            content = html_lib.escape(raw_msg[7:].strip())
             html = f"<div style='margin-bottom:6px;'><span style='color: #00f5a0; font-weight: bold;'>NEO &gt;</span> <span style='color: #bbf7d0;'>{content}</span></div>"
-        elif msg_str.startswith("[TOOL]"):
-            detail = msg_str[6:].strip()
+        elif raw_msg.startswith("[TOOL]"):
+            detail = html_lib.escape(raw_msg[6:].strip())
             html = f"<div style='margin-bottom:6px; padding:4px 8px; background: #061c27; border-left: 3px solid #38bdf8; border-radius: 4px;'><span style='color: #38bdf8; font-weight: bold;'>[ACTION]</span> <span style='color: #a5f3fc; font-family: Consolas;'>{detail}</span></div>"
-        elif "error" in msg_str.lower() or "[fail]" in msg_str.lower():
-            html = f"<div style='margin-bottom:6px;'><span style='color: #ef4444; font-weight: bold;'>[ERROR]</span> <span style='color: #fca5a5;'>{msg_str}</span></div>"
-        elif "●" in msg_str or "[ok]" in msg_str.lower() or "online" in msg_str.lower():
-            html = f"<div style='margin-bottom:6px;'><span style='color: #22d3ee; font-weight: bold;'>●</span> <span style='color: #a5f3fc;'>{msg_str}</span></div>"
+        elif "error" in raw_msg.lower() or "[fail]" in raw_msg.lower():
+            esc = html_lib.escape(raw_msg)
+            html = f"<div style='margin-bottom:6px;'><span style='color: #ef4444; font-weight: bold;'>[ERROR]</span> <span style='color: #fca5a5;'>{esc}</span></div>"
+        elif "●" in raw_msg or "[ok]" in raw_msg.lower() or "online" in raw_msg.lower():
+            esc = html_lib.escape(raw_msg)
+            html = f"<div style='margin-bottom:6px;'><span style='color: #22d3ee; font-weight: bold;'>●</span> <span style='color: #a5f3fc;'>{esc}</span></div>"
         else:
-            html = f"<div style='margin-bottom:6px;'><span style='color: #7dd3fc;'>{msg_str}</span></div>"
+            esc = html_lib.escape(raw_msg)
+            html = f"<div style='margin-bottom:6px;'><span style='color: #7dd3fc;'>{esc}</span></div>"
 
         self.chat.append(html)
 
@@ -1102,13 +1134,19 @@ class OrionWindow(QMainWindow):
 
     def confirm_action(
         self,
-        message
+        tool_or_message,
+        arguments=None
     ):
+        from core.safety import confirmation_message
+        if arguments is not None or str(tool_or_message).strip().lower() in {"shutdown_pc", "restart_pc", "delete_path"}:
+            prompt = confirmation_message(str(tool_or_message), arguments or {})
+        else:
+            prompt = str(tool_or_message)
 
         result = QMessageBox.question(
             self,
             "NEO AI Confirmation",
-            str(message),
+            prompt,
             QMessageBox.Yes
             | QMessageBox.No,
             QMessageBox.No
@@ -1164,12 +1202,15 @@ class OrionWindow(QMainWindow):
             False
         )
 
+        self._current_op_id += 1
+
         self.thread = QThread()
 
         self.worker = AgentWorker(
             self.agent,
             command
         )
+        self.worker.op_id = self._current_op_id
 
         self.worker.moveToThread(
             self.thread
@@ -1211,6 +1252,10 @@ class OrionWindow(QMainWindow):
         response
     ):
 
+        sender = self.sender()
+        if sender and (getattr(sender, "cancelled", False) or getattr(sender, "op_id", None) != self._current_op_id):
+            return
+
         self.append_chat(
             "NEO > " + response
         )
@@ -1227,6 +1272,9 @@ class OrionWindow(QMainWindow):
         self.set_inputs_enabled(
             True
         )
+
+        if self.orb.state == "THINKING":
+            self.set_state("READY")
 
     # ============================================================
     # VOICE
@@ -1260,11 +1308,14 @@ class OrionWindow(QMainWindow):
             "LISTENING"
         )
 
+        self._current_op_id += 1
+
         self.voice_thread = QThread()
 
         self.voice_worker = VoiceWorker(
             self.agent
         )
+        self.voice_worker.op_id = self._current_op_id
 
         self.voice_worker.moveToThread(
             self.voice_thread
@@ -1309,6 +1360,10 @@ class OrionWindow(QMainWindow):
         self,
         response
     ):
+
+        sender = self.sender()
+        if sender and (getattr(sender, "cancelled", False) or getattr(sender, "op_id", None) != self._current_op_id):
+            return
 
         self.set_state(
             "READY"
@@ -1359,11 +1414,14 @@ class OrionWindow(QMainWindow):
             "SPEAKING"
         )
 
+        self._current_op_id += 1
+
         self.tts_thread = QThread()
 
         self.tts_worker = TtsTestWorker(
             self.agent
         )
+        self.tts_worker.op_id = self._current_op_id
 
         self.tts_worker.moveToThread(
             self.tts_thread
@@ -1409,6 +1467,10 @@ class OrionWindow(QMainWindow):
         result
     ):
 
+        sender = self.sender()
+        if sender and (getattr(sender, "cancelled", False) or getattr(sender, "op_id", None) != self._current_op_id):
+            return
+
         self.append_chat(
             f"NEO > [TTS OK]: {result}"
         )
@@ -1425,6 +1487,9 @@ class OrionWindow(QMainWindow):
         self.set_inputs_enabled(
             True
         )
+
+        if self.orb.state == "SPEAKING":
+            self.set_state("READY")
 
         self.set_state(
             "READY"
@@ -1452,6 +1517,14 @@ class OrionWindow(QMainWindow):
 
     def stop_action(self):
 
+        self._current_op_id += 1
+        if self.worker:
+            self.worker.cancelled = True
+        if self.voice_worker:
+            self.voice_worker.cancelled = True
+        if self.tts_worker:
+            self.tts_worker.cancelled = True
+
         self.agent.cancel_current_operation()
         tts_manager.stop()
         self.append_chat("NEO > [STOPPED] Speech synthesis halted and current operations cancelled.")
@@ -1465,7 +1538,9 @@ class OrionWindow(QMainWindow):
             for thread in [self.thread, self.voice_thread, self.tts_thread]:
                 if thread and thread.isRunning():
                     thread.quit()
-                    thread.wait(1000)
+                    if not thread.wait(1000):
+                        thread.terminate()
+                        thread.wait(200)
         except Exception:
             pass
         event.accept()
