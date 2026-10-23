@@ -531,6 +531,7 @@ class OrionWindow(QMainWindow):
         self.agent = OrionAgent(
             confirm_callback=self.confirm_action
         )
+        self.agent.tool_callback = self.on_tool_executed
 
         self.thread = None
         self.worker = None
@@ -767,6 +768,18 @@ class OrionWindow(QMainWindow):
             self.stop_action
         )
 
+        self.clear_button = QPushButton(
+            "🗑  CLEAR"
+        )
+
+        self.clear_button.setObjectName(
+            "clearButton"
+        )
+
+        self.clear_button.clicked.connect(
+            self.clear_conversation
+        )
+
         self.settings_button = QPushButton(
             "⚙  SETTINGS"
         )
@@ -798,6 +811,10 @@ class OrionWindow(QMainWindow):
 
         bottom.addWidget(
             self.stop_button
+        )
+
+        bottom.addWidget(
+            self.clear_button
         )
 
         bottom.addWidget(
@@ -944,6 +961,18 @@ class OrionWindow(QMainWindow):
                 color: #fca5a5;
             }
 
+            #clearButton {
+                background: #101524;
+                border: 1px solid #3730a3;
+                color: #a5b4fc;
+            }
+
+            #clearButton:hover {
+                background: #1e1b4b;
+                border: 1px solid #6366f1;
+                color: #e0e7ff;
+            }
+
             #settingsButton {
                 background: #0d1926;
                 border: 1px solid #1e3a5f;
@@ -978,6 +1007,9 @@ class OrionWindow(QMainWindow):
         elif msg_str.startswith("ORION >"):
             content = msg_str[7:].strip()
             html = f"<div style='margin-bottom:6px;'><span style='color: #00f5a0; font-weight: bold;'>NEO &gt;</span> <span style='color: #bbf7d0;'>{content}</span></div>"
+        elif msg_str.startswith("[TOOL]"):
+            detail = msg_str[6:].strip()
+            html = f"<div style='margin-bottom:6px; padding:4px 8px; background: #061c27; border-left: 3px solid #38bdf8; border-radius: 4px;'><span style='color: #38bdf8; font-weight: bold;'>[ACTION]</span> <span style='color: #a5f3fc; font-family: Consolas;'>{detail}</span></div>"
         elif "error" in msg_str.lower() or "[fail]" in msg_str.lower():
             html = f"<div style='margin-bottom:6px;'><span style='color: #ef4444; font-weight: bold;'>[ERROR]</span> <span style='color: #fca5a5;'>{msg_str}</span></div>"
         elif "●" in msg_str or "[ok]" in msg_str.lower() or "online" in msg_str.lower():
@@ -1040,9 +1072,11 @@ class OrionWindow(QMainWindow):
         except Exception:
             provider_name = "NEURAL"
 
+        turns = len(getattr(self.agent, "conversation", [])) // 2
         self.telemetry.setText(
             f"AI CORE     ONLINE\n"
             f"MODEL       {model_name[:12]}\n"
+            f"CONTEXT     {turns} turns\n"
             f"TTS         {provider_name[:12]}\n"
             f"VOICE       {voice_state}\n"
             f"MODE        {state}"
@@ -1397,11 +1431,28 @@ class OrionWindow(QMainWindow):
         )
 
     # ============================================================
+    # TOOL EXECUTION CALLBACK & CONVERSATION CONTROLS
+    # ============================================================
+
+    def on_tool_executed(self, tool_name: str, result: str, success: bool):
+        """Called whenever an action tool is executed by NEO agent."""
+        status_tag = "SUCCESS" if success else "FAILED"
+        self.append_chat(f"[TOOL] {tool_name} ({status_tag}) > {result}")
+
+    def clear_conversation(self):
+        """Clears current conversation history without touching persistent settings."""
+        self.agent.clear_conversation()
+        self.chat.clear()
+        self.append_chat("NEO > Conversation context cleared. Persistent settings preserved.")
+        self.set_state("READY")
+
+    # ============================================================
     # STOP / CANCEL ACTION
     # ============================================================
 
     def stop_action(self):
 
+        self.agent.cancel_current_operation()
         tts_manager.stop()
         self.append_chat("NEO > [STOPPED] Speech synthesis halted and current operations cancelled.")
         self.set_state("READY")

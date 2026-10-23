@@ -8,12 +8,14 @@ import shutil
 import os
 from datetime import datetime
 
-from core.llm import ask_ollama, OllamaError
+from core.llm import ask_ollama, OllamaError, llm_manager
 from core.safety import (
     requires_confirmation,
     confirmation_message
 )
-from tools.registry import get_tool
+from tools.registry import get_tool, execute_tool
+from core.router import route_direct_command, normalize_plan
+from core.settings import settings
 
 
 # ============================================================
@@ -120,6 +122,8 @@ class OrionAgent:
         self.description = ORION_DESCRIPTION
 
         self.conversation = []
+        self.is_cancelled = False
+        self.tool_callback = None
 
         self.confirm_callback = (
             confirm_callback
@@ -128,6 +132,32 @@ class OrionAgent:
 
         self._last_command = ""
         self._last_command_time = 0
+
+    def clear_conversation(self) -> str:
+        """Clears the conversational context memory without altering settings."""
+        self.conversation.clear()
+        return "Conversation context cleared."
+
+    def cancel_current_operation(self) -> None:
+        """Signals cancellation to stop ongoing speech synthesis and AI execution."""
+        self.is_cancelled = True
+        try:
+            llm_manager.cancel()
+        except Exception:
+            pass
+        try:
+            from interfaces.tts import tts_manager
+            tts_manager.stop()
+        except Exception:
+            pass
+
+    def _record_conversation(self, user_msg: str, assistant_msg: str) -> None:
+        """Records user and assistant turns with max history turn bounds."""
+        max_turns = int(settings.get("max_history_turns", 8))
+        self.conversation.append({"role": "user", "content": user_msg})
+        self.conversation.append({"role": "assistant", "content": assistant_msg})
+        if len(self.conversation) > max_turns * 2:
+            self.conversation = self.conversation[-(max_turns * 2):]
 
 
     # ========================================================
@@ -223,15 +253,14 @@ class OrionAgent:
 
     def execute_action(self, action):
 
+        if self.is_cancelled:
+            return False, "Operation cancelled by user."
+
         if not isinstance(action, dict):
             return False, "Invalid action."
 
         tool_name = action.get("tool")
-
-        arguments = action.get(
-            "arguments",
-            {}
-        )
+        arguments = action.get("arguments", {})
 
         if not tool_name:
             return False, "No tool was specified."
@@ -239,41 +268,24 @@ class OrionAgent:
         if not isinstance(arguments, dict):
             arguments = {}
 
-        tool = get_tool(tool_name)
+        if tool_name == "stop_speaking":
+            from interfaces.tts import tts_manager
+            tts_manager.stop()
+            return True, "Speech synthesis stopped."
 
-        if tool is None:
-            return False, (
-                f"I don't have a tool for {tool_name}."
-            )
+        result = execute_tool(
+            tool_name=tool_name,
+            arguments=arguments,
+            confirm_callback=self.confirm_callback
+        )
 
-        if requires_confirmation(tool_name):
+        if self.tool_callback:
+            try:
+                self.tool_callback(tool_name, str(result), result.success)
+            except Exception:
+                pass
 
-            approved = self.confirm_callback(
-                tool_name,
-                arguments
-            )
-
-            if not approved:
-                return False, "Action cancelled."
-
-        try:
-
-            result = tool(**arguments)
-
-            return True, str(result)
-
-        except TypeError as exc:
-
-            return False, (
-                f"Invalid arguments for "
-                f"{tool_name}: {exc}"
-            )
-
-        except Exception as exc:
-
-            return False, (
-                f"Tool failed: {exc}"
-            )
+        return result.success, str(result)
 
 
     # ========================================================
@@ -1499,175 +1511,120 @@ class OrionAgent:
 
     def run(self, user_message):
 
+        self.is_cancelled = False
+
         message = str(
             user_message
         ).strip()
 
         if not message:
-
-            return (
-                "I didn't receive a command."
-            )
+            return "I didn't receive a command."
 
         # ----------------------------------------------------
-        # DIRECT COMMANDS ALWAYS COME FIRST
+        # 1. DIRECT FAST COMMANDS (IDENTITY, HARDWARE, UTILITIES)
         # ----------------------------------------------------
-
-        direct_result = (
-            self._direct_command(
-                message
-            )
-        )
+        direct_result = self._direct_command(message)
 
         if direct_result is not None:
-
-            normalized = self._normalize_voice_command(
-                message
-            )
-
+            normalized = self._normalize_voice_command(message)
             now = time.monotonic()
 
             if (
                 normalized == self._last_command
-                and
-                now - self._last_command_time < 2.0
+                and now - self._last_command_time < 2.0
             ):
-
-                return (
-                    "That command was already executed."
-                )
+                return "That command was already executed."
 
             self._last_command = normalized
             self._last_command_time = now
-
             return direct_result
 
+        # ----------------------------------------------------
+        # 2. DETERMINISTIC NATURAL ROUTER (BROWSER, FOLDERS, PDFS, RAM)
+        # ----------------------------------------------------
+        routed = route_direct_command(message)
+
+        if routed is not None:
+            normalized = self._normalize_voice_command(message)
+            self._last_command = normalized
+            self._last_command_time = time.monotonic()
+
+            plan_type = routed.get("type", "chat")
+            response = str(routed.get("response", ""))
+            actions = routed.get("actions", [])
+
+            if plan_type == "chat":
+                self._record_conversation(message, response)
+                return response
+
+            if plan_type in {"action", "query"}:
+                action_results = []
+                for act in actions:
+                    if self.is_cancelled:
+                        return "Operation cancelled by user."
+                    succ, res = self.execute_action(act)
+                    action_results.append(res)
+                    if not succ:
+                        break
+
+                final_text = "\n".join(action_results) if action_results else (response or "Command completed.")
+                self._record_conversation(message, response or final_text)
+                return final_text
 
         # ----------------------------------------------------
-        # ONLY UNKNOWN REQUESTS REACH OLLAMA
+        # 3. ONLY UNKNOWN / OPEN-ENDED REQUESTS REACH OLLAMA
         # ----------------------------------------------------
-
         try:
-
             plan = ask_ollama(
                 message,
                 self.conversation
             )
 
-            if not isinstance(
-                plan,
-                dict
-            ):
-
-                return (
-                    "I couldn't understand that request."
-                )
-
-
-            plan_type = plan.get(
-                "type",
-                "chat"
-            )
-
-            response = str(
-                plan.get(
-                    "response",
-                    ""
-                )
-            )
-
-            actions = plan.get(
-                "actions",
-                []
-            )
-
+            norm_plan = normalize_plan(plan)
+            plan_type = norm_plan.get("type", "chat")
+            response = str(norm_plan.get("response", "")).strip()
+            actions = norm_plan.get("actions", [])
 
             # ------------------------------------------------
             # NORMAL CHAT
             # ------------------------------------------------
-
             if plan_type == "chat":
-
-                self.conversation.append(
-                    {
-                        "role": "user",
-                        "content": message
-                    }
-                )
-
-                self.conversation.append(
-                    {
-                        "role": "assistant",
-                        "content": response
-                    }
-                )
-
-                return response or (
-                    "I don't have an answer for that."
-                )
-
+                final_chat = response or "I don't have an answer for that."
+                self._record_conversation(message, final_chat)
+                return final_chat
 
             # ------------------------------------------------
             # AI ACTIONS
             # ------------------------------------------------
-
             results = []
-
             for action in actions:
-
-                if not isinstance(
-                    action,
-                    dict
-                ):
-
+                if self.is_cancelled:
+                    return "Operation cancelled by user."
+                if not isinstance(action, dict):
                     continue
 
-                tool_name = action.get(
-                    "tool"
-                )
-
+                tool_name = action.get("tool")
                 if not tool_name:
-
                     continue
 
-                success, result = (
-                    self.execute_action(
-                        action
-                    )
-                )
-
-                results.append(
-                    result
-                )
-
+                success, result = self.execute_action(action)
+                results.append(result)
                 if not success:
-
                     break
 
-
-            if results:
-
-                return "\n".join(
-                    results
-                )
-
-
-            return response or (
-                "Command completed."
-            )
-
+            final_action_text = "\n".join(results) if results else (response or "Command completed.")
+            self._record_conversation(message, response or final_action_text)
+            return final_action_text
 
         except OllamaError as exc:
-
+            # Graceful offline fallback
             return (
-                f"NEO AI unavailable: {exc}"
+                f"NEO AI: {exc}\n"
+                "(Offline Mode: Local PC automation, file search, and system commands remain fully operational.)"
             )
 
         except Exception as exc:
-
-            return (
-                f"NEO error: {exc}"
-            )
+            return f"NEO error: {exc}"
 
 
 # Backward-compatible and modern alias

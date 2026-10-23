@@ -139,6 +139,20 @@ class SettingsDialog(QDialog):
         self.combo_ai_provider = QComboBox()
         self.combo_ai_provider.addItems(["ollama", "cloud"])
         form_provider.addRow("Provider:", self.combo_ai_provider)
+
+        # Context History Limit
+        turns_row = QHBoxLayout()
+        self.slider_max_turns = QSlider(Qt.Horizontal)
+        self.slider_max_turns.setRange(2, 20)
+        self.slider_max_turns.setValue(8)
+        self.lbl_max_turns = QLabel("8 turns")
+        self.slider_max_turns.valueChanged.connect(
+            lambda v: self.lbl_max_turns.setText(f"{v} turns")
+        )
+        turns_row.addWidget(self.slider_max_turns, 1)
+        turns_row.addWidget(self.lbl_max_turns)
+        form_provider.addRow("Context Limit:", turns_row)
+
         layout.addWidget(group_provider)
 
         # Ollama Group
@@ -315,6 +329,10 @@ class SettingsDialog(QDialog):
 
         self.input_ollama_host.setText(settings.get("ollama_host", "http://127.0.0.1:11434"))
         self._refresh_ollama_models()
+
+        max_turns = int(settings.get("max_history_turns", 8))
+        self.slider_max_turns.setValue(max_turns)
+        self.lbl_max_turns.setText(f"{max_turns} turns")
 
         self.input_cloud_url.setText(settings.get("cloud_base_url", "https://api.openai.com/v1"))
         self.input_cloud_key.setText(settings.get("cloud_api_key", ""))
@@ -553,6 +571,7 @@ Security & Control:
         settings.set("cloud_base_url", self.input_cloud_url.text().strip())
         settings.set("cloud_api_key", self.input_cloud_key.text().strip())
         settings.set("cloud_model", self.input_cloud_model.text().strip())
+        settings.set("max_history_turns", self.slider_max_turns.value())
 
         settings.set("whisper_model", self.combo_whisper_model.currentText())
         settings.set("speech_language", self.combo_speech_lang.currentData())

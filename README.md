@@ -134,6 +134,12 @@ Run the complete test suite anytime to verify system stability:
 # Phase 1 Voice Commands & Pipeline Test (7 tests)
 python -m unittest tests.test_phase1_voice_commands
 
+# Phase 2 Natural Voice, Fallback & Multilingual Speech (9 tests)
+python -m unittest tests.test_phase2_voice
+
+# Phase 3 AI Brain, Intelligent NLU & Automation (11 tests, 33 commands)
+python -m unittest tests.test_phase3_brain
+
 # Comprehensive NEO AI Architecture & Security Test (17 tests)
 python -m unittest tests.test_neo_ai
 ```

@@ -31,7 +31,13 @@ For computer actions:
 Available tools:
 
 open_target
+open_special_folder
 search_web
+search_youtube
+get_ram_info
+get_system_telemetry
+find_latest_file
+find_files
 
 list_windows
 active_window

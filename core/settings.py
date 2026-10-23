@@ -26,6 +26,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "cloud_base_url": "https://api.openai.com/v1",
     "cloud_model": "gpt-4o-mini",
     "llm_timeout": 60,
+    "max_history_turns": 8,
 
     # Speech Recognition
     "whisper_model": "tiny.en",

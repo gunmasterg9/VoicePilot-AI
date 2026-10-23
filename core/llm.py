@@ -1,11 +1,12 @@
 """
 NEO AI - LLM Provider Architecture
 Provides provider-based language model integrations supporting:
-1. Local Ollama models (with dynamic discovery and offline resilience)
+1. Local Ollama models (with dynamic discovery, JSON error recovery, and offline resilience)
 2. Optional Cloud LLM providers (OpenAI-compatible)
 """
 
 import json
+import re
 import urllib.request
 import urllib.error
 from abc import ABC, abstractmethod
@@ -19,6 +20,45 @@ from core.settings import settings
 class OllamaError(Exception):
     """Raised when communication with an LLM provider fails."""
     pass
+
+
+def _extract_and_parse_json(content: str) -> Dict[str, Any]:
+    """
+    Robustly parses JSON responses from local LLMs.
+    Handles Markdown code fences, extra text prefixes, and trailing comments.
+    """
+    text = content.strip()
+
+    # 1. Strip Markdown code blocks if present
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip()
+
+    # 2. Try direct json.loads
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    # 3. Extract bracketed JSON object via regex
+    match = re.search(r"(\{[\s\S]*\})", text)
+    if match:
+        try:
+            data = json.loads(match.group(1))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+    # 4. Fallback: Wrap raw text in conversational response
+    return {
+        "type": "chat",
+        "response": text,
+        "actions": []
+    }
 
 
 class BaseLLMProvider(ABC):
@@ -52,13 +92,27 @@ class OllamaProvider(BaseLLMProvider):
         self._host = (host or settings.get("ollama_host", OLLAMA_HOST)).rstrip("/")
         self._configured_model = model or settings.get("ollama_model", OLLAMA_MODEL)
         self._resolved_model: Optional[str] = None
+        self._cancelled = False
 
     @property
     def provider_name(self) -> str:
         return f"Ollama ({self.get_active_model()})"
 
+    def cancel(self):
+        """Signals cancellation of any ongoing in-flight request."""
+        self._cancelled = True
+
     def check_health(self) -> bool:
-        return bool(self.list_models())
+        """Quick 2-second reachability probe."""
+        request = urllib.request.Request(
+            f"{self._host}/api/tags",
+            method="GET"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=2.0) as response:
+                return response.status == 200
+        except Exception:
+            return False
 
     def is_available(self) -> bool:
         return self.check_health()
@@ -69,7 +123,7 @@ class OllamaProvider(BaseLLMProvider):
             method="GET"
         )
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            with urllib.request.urlopen(request, timeout=3.0) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode("utf-8"))
                     return [m.get("name") for m in data.get("models", [])]
@@ -101,18 +155,33 @@ class OllamaProvider(BaseLLMProvider):
                 self._resolved_model = m
                 return self._resolved_model
 
+        # Prefer lightweight models optimized for 8 GB RAM
+        lightweight_candidates = ["qwen3:1.7b", "smollm2:latest", "llama3.2:latest", "qwen2.5:7b"]
+        for cand in lightweight_candidates:
+            if cand in available:
+                self._resolved_model = cand
+                return self._resolved_model
+
         # Fall back to first available installed model
         self._resolved_model = available[0]
         return self._resolved_model
 
     def ask(self, user_message: str, conversation: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+        self._cancelled = False
+
+        # Build message history with configurable turn limits
+        max_turns = int(settings.get("max_history_turns", 8))
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
         if conversation:
-            messages.extend(conversation)
+            # Sliding window of recent turns (each turn has user + assistant)
+            recent_turns = conversation[-(max_turns * 2):]
+            messages.extend(recent_turns)
+
         messages.append({"role": "user", "content": user_message})
 
         active_model = self.get_active_model()
-        timeout = int(settings.get("llm_timeout", 60))
+        timeout = int(settings.get("llm_timeout", 45))
 
         payload = {
             "model": active_model,
@@ -131,10 +200,16 @@ class OllamaProvider(BaseLLMProvider):
 
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
+                if self._cancelled:
+                    return {"type": "chat", "response": "Request cancelled by user.", "actions": []}
                 raw = response.read().decode("utf-8")
         except urllib.error.URLError as exc:
             raise OllamaError(
-                "Cannot connect to Ollama. Please ensure Ollama is running."
+                f"Cannot connect to Ollama at {self._host}. Please ensure Ollama is running."
+            ) from exc
+        except TimeoutError as exc:
+            raise OllamaError(
+                f"Ollama request timed out after {timeout} seconds."
             ) from exc
         except Exception as exc:
             raise OllamaError(f"Ollama request error: {exc}") from exc
@@ -142,18 +217,9 @@ class OllamaProvider(BaseLLMProvider):
         try:
             result = json.loads(raw)
             content = result["message"]["content"]
-            parsed = json.loads(content)
-            if isinstance(parsed, dict):
-                return parsed
-            return {"type": "chat", "response": str(parsed)}
+            return _extract_and_parse_json(content)
         except Exception as exc:
-            # Handle non-JSON output gracefully
-            try:
-                result = json.loads(raw)
-                content = result["message"]["content"]
-                return {"type": "chat", "response": content}
-            except Exception:
-                raise OllamaError(f"Invalid model response: {exc}") from exc
+            raise OllamaError(f"Invalid model response: {exc}") from exc
 
 
 class CloudLLMProvider(BaseLLMProvider):
@@ -174,9 +240,7 @@ class CloudLLMProvider(BaseLLMProvider):
         return f"Cloud ({self._model})"
 
     def check_health(self) -> bool:
-        if not self._api_key:
-            return False
-        return True
+        return bool(self._api_key)
 
     def is_available(self) -> bool:
         return self.check_health()
@@ -188,9 +252,10 @@ class CloudLLMProvider(BaseLLMProvider):
         if not self._api_key:
             raise OllamaError("Cloud provider selected but no API key configured in Settings.")
 
+        max_turns = int(settings.get("max_history_turns", 8))
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         if conversation:
-            messages.extend(conversation)
+            messages.extend(conversation[-(max_turns * 2):])
         messages.append({"role": "user", "content": user_message})
 
         payload = {
@@ -215,7 +280,7 @@ class CloudLLMProvider(BaseLLMProvider):
                 raw = response.read().decode("utf-8")
             result = json.loads(raw)
             content = result["choices"][0]["message"]["content"]
-            return json.loads(content)
+            return _extract_and_parse_json(content)
         except Exception as exc:
             raise OllamaError(f"Cloud LLM request failed: {exc}") from exc
 
@@ -241,6 +306,11 @@ class LLMManager:
         if isinstance(provider, OllamaProvider):
             return provider.get_active_model()
         return getattr(provider, "_model", "Cloud Model")
+
+    def cancel(self):
+        """Cancel active in-flight request."""
+        if isinstance(self.ollama_provider, OllamaProvider):
+            self.ollama_provider.cancel()
 
     def ask(self, user_message: str, conversation: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         return self.get_provider().ask(user_message, conversation)
