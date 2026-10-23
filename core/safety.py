@@ -37,6 +37,13 @@ def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
         p = Path(path_str).expanduser().resolve()
         p_str = str(p).lower().rstrip("\\/")
 
+        # 0. Reject path traversal attempting to target protected directories or escape bounds
+        raw_parts = [part.lower() for part in Path(path_str).parts]
+        if ".." in raw_parts:
+            # Check if traversal references windows, system, or drive roots
+            if any(name in raw_parts for name in ["windows", "system32", "program files", "users"]):
+                return False, f"Refusing to delete path with unsafe directory traversal: {path_str}"
+
         # 1. Protect drive root (e.g. C:\, D:\)
         if len(p_str) <= 3 and ":" in p_str:
             return False, f"Refusing to delete drive root: {p}"
@@ -49,6 +56,11 @@ def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
             return False, f"Refusing to delete all-users root directory: {p}"
         if p_str == user_home:
             return False, f"Refusing to delete user profile root directory: {p}"
+
+        # Protect any directory named 'windows', 'system32', 'program files', etc.
+        protected_directory_names = {"windows", "system32", "syswow64", "program files", "program files (x86)", "programdata"}
+        if p.name.lower() in protected_directory_names:
+            return False, f"Refusing to delete protected system target name: {p}"
 
         # 3. Protect Windows system directories
         critical_paths = []
@@ -106,3 +118,20 @@ def confirmation_message(tool_name: str, arguments: Optional[Dict] = None) -> st
         return f"NEO is requesting permission to permanently delete: '{path}'. Proceed?"
 
     return f"NEO is requesting permission to execute potentially destructive tool '{tool_name}'. Proceed?"
+
+
+def mask_sensitive_data(text: str) -> str:
+    """Masks API keys, tokens, and credentials in logs and outputs."""
+    if not text:
+        return ""
+    import re
+    # Mask OpenAI-like keys (sk-...)
+    masked = re.sub(r"sk-[A-Za-z0-9_\-]{8,}", "sk-***[MASKED]***", str(text))
+    # Mask generic key/token/password assignments in json or query strings
+    masked = re.sub(
+        r'("(?:api_key|cloud_api_key|token|password|secret)"\s*:\s*")[^"]+(")',
+        r'\1***[MASKED]***\2',
+        masked,
+        flags=re.IGNORECASE
+    )
+    return masked

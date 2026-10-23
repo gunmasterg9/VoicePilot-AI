@@ -140,6 +140,9 @@ python -m unittest tests.test_phase2_voice
 # Phase 3 AI Brain, Intelligent NLU & Automation (11 tests, 33 commands)
 python -m unittest tests.test_phase3_brain
 
+# Phase 4 End-to-End Reliability & Safety Integration (14 tests)
+python -m unittest tests.test_phase4_integration
+
 # Comprehensive NEO AI Architecture & Security Test (17 tests)
 python -m unittest tests.test_neo_ai
 ```

@@ -128,8 +128,11 @@ def open_target(target: str, force_web: bool = False) -> str:
     if "notepad" in normalized and ("letter" in normalized or "write" in normalized):
         app = find_application("notepad")
         if app:
-            launch_application(app)
-            return "Opened Notepad. I am ready to help you draft your letter."
+            success, msg = launch_application(app)
+            if success:
+                return "Opened Notepad. Who would you like to address the letter to, and what is the topic?"
+            return f"Failed to open Notepad: {msg}"
+        return "Could not find Notepad application on this system."
 
     # Direct official website
     if not force_web:

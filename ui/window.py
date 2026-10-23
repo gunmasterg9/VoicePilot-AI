@@ -1458,6 +1458,18 @@ class OrionWindow(QMainWindow):
         self.set_state("READY")
         self.set_inputs_enabled(True)
 
+    def closeEvent(self, event):
+        """Cleanly halts audio synthesis and shuts down background worker threads on exit."""
+        try:
+            self.stop_action()
+            for thread in [self.thread, self.voice_thread, self.tts_thread]:
+                if thread and thread.isRunning():
+                    thread.quit()
+                    thread.wait(1000)
+        except Exception:
+            pass
+        event.accept()
+
     # ============================================================
     # SETTINGS MODAL
     # ============================================================

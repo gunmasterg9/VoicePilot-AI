@@ -241,7 +241,7 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
     if "notepad" in lower and ("letter" in lower or "write" in lower or "help me" in lower):
         return {
             "type": "action",
-            "response": "Opening Notepad to assist you with drafting your letter.",
+            "response": "Opening Notepad. Who would you like to address the letter to, and what is the topic?",
             "actions": [
                 {
                     "tool": "open_target",

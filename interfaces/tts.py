@@ -386,6 +386,8 @@ class TTSManager:
                     if success:
                         self._is_speaking = False
                         return True
+                    else:
+                        self.log("NEO > [TTS FALLBACK] Online voice unavailable. Switching to offline SAPI fallback.")
                 except Exception as exc:
                     self.log(f"NEO > [TTS FALLBACK] Online voice failed ({exc}). Switching to offline SAPI fallback.")
 
