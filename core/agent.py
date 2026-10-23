@@ -21,11 +21,12 @@ from tools.registry import get_tool
 # ============================================================
 
 ORION_NAME = "NEO"
-ORION_CREATOR = "Eshan Maity"
+NEO_CREATOR = "Gautam Vandar"
+ORION_CREATOR = NEO_CREATOR
 
 ORION_DESCRIPTION = (
     "I am NEO, a local AI PC assistant created by "
-    "Gautam Vnadar"
+    "Gautam Vandar"
 )
 
 
@@ -845,12 +846,14 @@ class OrionAgent:
             "who is your developer",
             "who is your maker",
             "who made you orion",
+            "who made you neo",
+            "who created you neo",
         }
 
         if clean in creator_phrases:
 
             return (
-                "I was created by Eshan Maity."
+                "I was created by Gautam Vandar."
             )
 
 
@@ -866,6 +869,11 @@ class OrionAgent:
             ("who", "developed", "you"),
             ("who", "develop", "you"),
             ("who", "programmed", "you"),
+            ("who", "programmed", "neo"),
+            ("who", "made", "neo"),
+            ("who", "created", "neo"),
+            ("who", "built", "neo"),
+            ("who", "developed", "neo"),
             ("who", "programmed", "orion"),
             ("who", "made", "orion"),
             ("who", "created", "orion"),
@@ -887,7 +895,7 @@ class OrionAgent:
         ):
 
             return (
-                "I was created by Eshan Maity."
+                "I was created by Gautam Vandar."
             )
 
 
@@ -944,7 +952,7 @@ class OrionAgent:
 
                 return (
                     "I am NEO, a local AI PC assistant "
-                    "created by Eshan Maity. "
+                    "created by Gautam Vandar. "
                     "I can control your computer, "
                     "open applications and websites, "
                     "manage files, perform system actions, "

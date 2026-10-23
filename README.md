@@ -8,7 +8,7 @@
 
 **NEO AI** (formerly ORION) is an advanced, offline-first, local AI PC assistant engineered specifically for Windows desktops. Built with Python 3.12 and PySide6, NEO combines local speech recognition (Faster-Whisper), dynamic local LLMs (Ollama), natural neural and offline SAPI5 text-to-speech, and secure desktop automation.
 
-> **Original Creator & Attribution**: Created by **Eshan Maity**. Upgraded to NEO AI architecture while preserving historical attribution and module compatibility.
+> **Original Creator & Attribution**: Created by **Gautam Vandar**. Upgraded to NEO AI architecture while preserving historical attribution and module compatibility.
 
 ---
 
@@ -81,7 +81,7 @@ ollama pull qwen3:1.7b
 ## Launching NEO AI
 
 ### Option A: Desktop Double-Click Launcher
-Double-click `launch_neo.bat` (or legacy `launch_orion.bat`).
+Double-click `launch_neo.bat`.
 
 ### Option B: Terminal Command
 ```powershell
@@ -104,7 +104,7 @@ NEO AI has been verified against 20 core PC automation and conversational comman
 | # | Command | Category | Expected Response |
 |---|---------|----------|-------------------|
 | 01 | `who are you` | Identity | "My name is NEO. I am your local AI PC assistant..." |
-| 02 | `who created you` | Attribution | "I was created by Eshan Maity." |
+| 02 | `who created you` | Attribution | "I was created by Gautam Vandar." |
 | 03 | `what can you do` | Capabilities | Capabilities overview and available modules |
 | 04 | `what is your name` | Identity | "My name is NEO..." |
 | 05 | `what time is it` | System API | Real-time system clock (e.g., "05:15 PM") |
@@ -157,4 +157,3 @@ For automated pipelines or existing user scripts configured for ORION:
 - `from interfaces.terminal import run_terminal` continues to work (aliases `run_neo_terminal`).
 - `from interfaces.api import OrionHandler, run_server` continue to work.
 - Existing settings files with `ORION_...` prefixes are automatically migrated without data loss.
-- `launch_orion.bat` seamlessly redirects to `launch_neo.bat`.

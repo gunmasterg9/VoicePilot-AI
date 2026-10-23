@@ -31,7 +31,7 @@ class TestNeoIdentityAndAliases(unittest.TestCase):
         agent = NeoAgent()
         self.assertEqual(agent.name, "NEO")
         self.assertIn("NEO", agent.description)
-        self.assertIn("Eshan Maity", agent.creator)
+        self.assertIn("Gautam Vandar", agent.creator)
 
     def test_ui_alias(self):
         from ui.window import NeoWindow, OrionWindow
