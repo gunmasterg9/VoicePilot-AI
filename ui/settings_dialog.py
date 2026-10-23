@@ -432,14 +432,22 @@ class SettingsDialog(QDialog):
 
     def _refresh_microphones(self):
         self.combo_microphone.clear()
-        self.combo_microphone.addItem("System Default Device", None)
-        mics = VoiceInterface.get_available_microphones()
+        self.combo_microphone.addItem("Auto-detect Best Physical Microphone", None)
+        detailed_mics = VoiceInterface.get_input_devices_detailed()
         configured_mic = settings.get("mic_device_index")
+        configured_name = settings.get("mic_device_name", "")
 
         selected_idx = 0
-        for i, (idx, name) in enumerate(mics, 1):
-            self.combo_microphone.addItem(f"[{idx}] {name}", idx)
+        for i, d in enumerate(detailed_mics, 1):
+            idx = d["index"]
+            tag = "[Virtual]" if d["is_virtual"] else "[Physical]"
+            def_tag = " (System Default)" if d["is_default"] else ""
+            label = f"[{idx}] {d['name']} {tag} ({d['host_api']}){def_tag}"
+            self.combo_microphone.addItem(label, idx)
+
             if configured_mic is not None and configured_mic == idx:
+                selected_idx = i
+            elif configured_mic is None and configured_name and configured_name.lower() in d["name"].lower():
                 selected_idx = i
 
         self.combo_microphone.setCurrentIndex(selected_idx)
@@ -460,22 +468,52 @@ class SettingsDialog(QDialog):
 
     def _test_microphone(self):
         device_idx = self.combo_microphone.currentData()
+        self.btn_test_mic.setEnabled(False)
+        self.btn_test_mic.setText("Measuring...")
         try:
-            import speech_recognition as sr
-            with sr.Microphone(device_index=device_idx) as src:
-                r = sr.Recognizer()
-                r.adjust_for_ambient_noise(src, duration=0.2)
-            QMessageBox.information(
-                self,
-                "Microphone Check",
-                f"Microphone {self.combo_microphone.currentText()} is accessible and online!"
-            )
+            result = VoiceInterface.test_microphone_input(device_index=device_idx, duration=1.2)
+            if not result.get("success"):
+                QMessageBox.warning(
+                    self,
+                    "Microphone Error",
+                    f"Microphone test failed on device [{result.get('device_index')}]:\n\n"
+                    f"{result.get('error')}\n\n"
+                    "Tip: Check Windows Microphone Privacy Settings and verify the device is connected."
+                )
+            elif result.get("status") == "silent":
+                QMessageBox.warning(
+                    self,
+                    "Microphone Silent / Inactive",
+                    f"Device: {result.get('device_name')} [Index {result.get('device_index')}]\n"
+                    f"RMS Energy: {result.get('rms')} (Peak: {result.get('peak')})\n"
+                    f"Status: {result.get('status_description')}\n\n"
+                    "Warning: Zero audio signal was detected. If this is a virtual audio driver (e.g. AudioRelay/Cable), "
+                    "switch to a physical microphone (e.g. Realtek Microphone Array)."
+                )
+            elif result.get("status") == "low_energy":
+                QMessageBox.information(
+                    self,
+                    "Microphone Low Energy",
+                    f"Device: {result.get('device_name')} [Index {result.get('device_index')}]\n"
+                    f"RMS Energy: {result.get('rms')} (Peak: {result.get('peak')})\n"
+                    f"Status: {result.get('status_description')}\n\n"
+                    "Signal is low. Ensure your microphone volume in Windows Sound Settings is raised."
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Microphone Operational",
+                    f"Device: {result.get('device_name')} [Index {result.get('device_index')}]\n"
+                    f"RMS Energy: {result.get('rms')} (Peak: {result.get('peak')})\n"
+                    f"Sample Rate: {result.get('sample_rate')} Hz\n"
+                    f"Status: {result.get('status_description')}\n\n"
+                    "Microphone is online and capturing sound cleanly!"
+                )
         except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Microphone Error",
-                f"Failed to open microphone: {exc}"
-            )
+            QMessageBox.critical(self, "Microphone Test Error", f"Unexpected error during microphone test: {exc}")
+        finally:
+            self.btn_test_mic.setEnabled(True)
+            self.btn_test_mic.setText("🎤 Test Mic")
 
     def _test_voice(self):
         provider = self.combo_tts_mode.currentData()
@@ -531,6 +569,8 @@ class SettingsDialog(QDialog):
         ollama_ok = llm_manager.ollama_provider.check_health()
         mics_count = len(VoiceInterface.get_available_microphones())
         outs_count = len(TTSManager.get_available_output_devices())
+        res_idx, res_name, res_virt = VoiceInterface.resolve_input_device()
+        mic_tag = "Virtual" if res_virt else "Physical"
 
         report = f"""==================================================
   NEO AI — SYSTEM & SUBSYSTEM TELEMETRY
@@ -546,6 +586,7 @@ AI Brain:
 
 Voice Subsystems:
   Input Devices:   {mics_count} microphone(s) detected
+  Active Input:    [{res_idx}] {res_name} ({mic_tag})
   Output Devices:  {outs_count} speaker/headphone output(s) detected
   Speech Engine:   Faster-Whisper ({settings.get('whisper_model', 'tiny.en')})
   Language Target: {settings.get('speech_language', 'en').upper()}
@@ -575,7 +616,15 @@ Security & Control:
 
         settings.set("whisper_model", self.combo_whisper_model.currentText())
         settings.set("speech_language", self.combo_speech_lang.currentData())
-        settings.set("mic_device_index", self.combo_microphone.currentData())
+
+        selected_mic_idx = self.combo_microphone.currentData()
+        settings.set("mic_device_index", selected_mic_idx)
+        if selected_mic_idx is not None:
+            detailed = VoiceInterface.get_input_devices_detailed()
+            matched_name = next((d["name"] for d in detailed if d["index"] == selected_mic_idx), "")
+            settings.set("mic_device_name", matched_name)
+        else:
+            settings.set("mic_device_name", "")
 
         settings.set("tts_provider", self.combo_tts_mode.currentData())
         settings.set("tts_voice_online", self.combo_online_voice.currentData())

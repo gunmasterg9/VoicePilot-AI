@@ -469,22 +469,29 @@ def execute_tool(
             permission=ToolPermission.REVERSIBLE
         )
 
-    # Permission check for destructive actions
-    if requires_confirmation(tool_name):
-        if not confirm_callback:
+    # Fail closed for every destructive action. A missing or broken
+    # confirmation handler must never be interpreted as approval.
+    destructive = requires_confirmation(tool_name) or (
+        spec is not None and spec.permission == ToolPermission.DESTRUCTIVE
+    )
+    if destructive:
+        if confirm_callback is None:
             return ToolResult(
                 success=False,
                 output="",
-                error=f"Destructive tool '{tool_name}' blocked: explicit user confirmation callback required.",
-                permission=ToolPermission.DESTRUCTIVE
+                error="Action blocked: explicit confirmation is unavailable.",
+                permission=ToolPermission.DESTRUCTIVE,
             )
-        approved = confirm_callback(tool_name, arguments)
+        try:
+            approved = confirm_callback(tool_name, arguments) is True
+        except Exception:
+            approved = False
         if not approved:
             return ToolResult(
                 success=False,
                 output="",
-                error="Action cancelled by user.",
-                permission=ToolPermission.DESTRUCTIVE
+                error="Action cancelled or confirmation failed.",
+                permission=ToolPermission.DESTRUCTIVE,
             )
 
     # Use spec execution if available
@@ -494,23 +501,9 @@ def execute_tool(
     # Fallback to direct function call
     try:
         raw = func(**arguments)
-        out_str = str(raw).strip()
-        lower_out = out_str.lower()
-        failure_prefixes = (
-            "error", "failed", "safety refusal", "refusing to", "could not",
-            "access denied", "path does not exist", "source does not exist",
-            "destination already exists", "cannot find", "no valid", "action cancelled"
-        )
-        if any(lower_out.startswith(pfx) for pfx in failure_prefixes):
-            return ToolResult(
-                success=False,
-                output=out_str,
-                error=out_str,
-                permission=ToolPermission.REVERSIBLE
-            )
         return ToolResult(
             success=True,
-            output=out_str,
+            output=str(raw),
             permission=ToolPermission.REVERSIBLE
         )
     except Exception as exc:

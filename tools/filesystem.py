@@ -263,8 +263,14 @@ def rename_file(source: str, destination: str) -> str:
 
 def delete_path(path: str) -> str:
     """Permanently deletes a file or directory after safety checks."""
-    target = safe_path(path)
+    # Validate the raw input before resolving it so traversal components are
+    # not erased by Path.resolve(). Then validate the resolved target too, to
+    # catch symlinks or aliases that point into protected locations.
+    safe, reason = is_path_safe_for_deletion(str(path))
+    if not safe:
+        return f"Safety refusal: {reason}"
 
+    target = safe_path(path)
     safe, reason = is_path_safe_for_deletion(str(target))
     if not safe:
         return f"Safety refusal: {reason}"

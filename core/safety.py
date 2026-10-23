@@ -5,7 +5,7 @@ explicit human confirmation for all destructive actions.
 """
 
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Dict, Optional, Tuple, Set
 
 # Operations classified as destructive that REQUIRE user confirmation
@@ -25,63 +25,32 @@ CRITICAL_ENV_VARS = [
 ]
 
 
-def normalize_safe_path(p_str: str) -> str:
-    """
-    Strips Windows extended device prefixes (\\\\?\\, \\\\.\\, \\??\\, UNC)
-    and normalizes slashes to prevent adversarial path filtering bypasses.
-    Preserves root trailing backslash for drive roots to prevent resolve() 
-    from interpreting them as drive-relative CWD paths.
-    """
-    s = str(p_str).replace("/", "\\").strip()
-    for unc_pfx in ("\\\\?\\unc\\", "\\\\.\\unc\\", "\\??\\unc\\"):
-        if s.lower().startswith(unc_pfx):
-            s = "\\\\" + s[len(unc_pfx):]
-            break
-    for pfx in ("\\\\?\\", "\\\\.\\", "\\??\\"):
-        if s.startswith(pfx):
-            s = s[len(pfx):]
-            break
-    # Drive root specification (e.g. C:, C:\, C:\\) must preserve trailing backslash
-    if len(s) >= 2 and s[1] == ":" and (len(s) == 2 or all(c == "\\" for c in s[2:])):
-        return s[:2].upper() + "\\"
-    # Naked root slash
-    if s and all(c == "\\" for c in s):
-        return "\\"
-    return s.rstrip("\\/")
-
-
 def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
     """
     Validates that a path is safe for deletion.
     Blocks deletion of Windows, Program Files, system drives, user roots, and system files.
-    Resistant to path traversal, symbolic links, alternate device paths, and extended-length prefixes.
     """
     try:
         if not path_str or not str(path_str).strip():
             return False, "Target path is empty."
 
-        clean_input = normalize_safe_path(path_str)
-        p = Path(clean_input).expanduser().resolve()
-        p_str = normalize_safe_path(str(p)).lower()
+        raw_path = str(path_str).strip()
+        # Inspect both native and Windows path syntax. This also makes the
+        # validator deterministic in tests run on non-Windows hosts.
+        raw_parts = list(Path(raw_path).parts) + list(PureWindowsPath(raw_path).parts)
+        if any(part == ".." for part in raw_parts):
+            return False, f"Refusing to delete path containing traversal components: {raw_path}"
 
-        # 0. Reject path traversal attempting to target protected directories or escape bounds
-        raw_parts = [part.lower() for part in Path(clean_input).parts]
-        if ".." in raw_parts:
-            if any(name in raw_parts for name in ["windows", "system32", "syswow64", "program files", "users"]):
-                return False, f"Refusing to delete path with unsafe directory traversal: {path_str}"
+        p = Path(raw_path).expanduser().resolve()
+        p_str = str(p).lower().rstrip("\\/")
 
-        # 1. Protect drive root (e.g. C:, C:\, D:\, \\server\share)
-        drive, rest = os.path.splitdrive(p_str)
-        if drive and rest.strip("\\/") == "":
-            return False, f"Refusing to delete drive root: {p}"
+        # 1. Protect drive root (e.g. C:\, D:\)
         if len(p_str) <= 3 and ":" in p_str:
-            return False, f"Refusing to delete drive root: {p}"
-        if p == Path(p.anchor):
             return False, f"Refusing to delete drive root: {p}"
 
         # 2. Protect Windows accounts and user root (e.g. C:\Users, C:\Users\Username)
-        user_home = normalize_safe_path(str(Path.home().resolve())).lower()
-        user_parent = normalize_safe_path(str(Path.home().parent.resolve())).lower()
+        user_home = str(Path.home()).lower().rstrip("\\/")
+        user_parent = str(Path.home().parent).lower().rstrip("\\/")
 
         if p_str == user_parent:
             return False, f"Refusing to delete all-users root directory: {p}"
@@ -89,7 +58,7 @@ def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
             return False, f"Refusing to delete user profile root directory: {p}"
 
         # Protect any directory named 'windows', 'system32', 'program files', etc.
-        protected_directory_names = {"windows", "system32", "syswow64", "program files", "program files (x86)", "programdata", "users"}
+        protected_directory_names = {"windows", "system32", "syswow64", "program files", "program files (x86)", "programdata"}
         if p.name.lower() in protected_directory_names:
             return False, f"Refusing to delete protected system target name: {p}"
 
@@ -98,14 +67,13 @@ def is_path_safe_for_deletion(path_str: str) -> Tuple[bool, str]:
         for var in CRITICAL_ENV_VARS:
             val = os.environ.get(var)
             if val:
-                critical_paths.append(normalize_safe_path(str(Path(val).resolve())).lower())
+                critical_paths.append(str(Path(val).resolve()).lower().rstrip("\\/"))
 
         # Fallback defaults if env vars missing
         default_crit = [r"c:\windows", r"c:\windows\system32", r"c:\program files", r"c:\program files (x86)"]
         for dc in default_crit:
-            cleaned_dc = normalize_safe_path(dc).lower()
-            if cleaned_dc not in critical_paths:
-                critical_paths.append(cleaned_dc)
+            if dc not in critical_paths:
+                critical_paths.append(dc)
 
         for crit in critical_paths:
             if p_str == crit or p_str.startswith(crit + "\\"):
@@ -153,33 +121,30 @@ def confirmation_message(tool_name: str, arguments: Optional[Dict] = None) -> st
 
 
 def mask_sensitive_data(text: str) -> str:
-    """Masks API keys, tokens, credentials, and passwords in logs and outputs."""
+    """Mask common API-key, token, password, and authorization formats."""
     if not text:
         return ""
     import re
-    # Mask OpenAI-like keys (sk-...)
-    masked = re.sub(r"sk-[A-Za-z0-9_\-]{8,}", "sk-***[MASKED]***", str(text))
-    # Mask Bearer tokens
-    masked = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.]{8,}", "Bearer ***[MASKED]***", masked, flags=re.IGNORECASE)
-    # Mask generic key/token/password assignments in json or query strings
+
+    masked = str(text)
+    # Recognize OpenAI-style keys even when embedded in free-form messages.
+    masked = re.sub(r"sk-[A-Za-z0-9_\-]{8,}", "sk-***[MASKED]***", masked)
+
+    # HTTP bearer credentials must be masked before the generic authorization
+    # assignment rule, otherwise that rule could consume only the word Bearer.
+    masked = re.sub(r'(?i)(\bBearer\s+)[A-Za-z0-9._~+/-]+=*', r'\1***[MASKED]***', masked)
+
+    # JSON-style quoted keys: "api_key": "value".
     masked = re.sub(
-        r'("(?:api_key|cloud_api_key|token|password|secret|auth_token)"\s*:\s*")[^"]+(")',
-        r'\1***[MASKED]***\2',
+        r'("(?:api[_-]?key|cloud_api_key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)"\s*:\s*)(?!"[^"]*\[MASKED\])"[^"]*"',
+        r'\1"***[MASKED]***"',
         masked,
-        flags=re.IGNORECASE
+        flags=re.IGNORECASE,
     )
-    # Mask key/token assignments in python dict strings
+    # Plain key=value / key: value formats, including quoted or unquoted values.
     masked = re.sub(
-        r"('(?:api_key|cloud_api_key|token|password|secret|auth_token)'\s*:\s*')[^']+(')",
-        r"\1***[MASKED]***\2",
+        r'(?i)(\b(?:api[_-]?key|cloud_api_key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization)\b\s*[:=]\s*)(?!(?:"|\')?[^"\'\s]*\[MASKED\])(?:"[^"]*"|\'[^\']*\'|[^,\s;&}]+)',
+        r'\1"***[MASKED]***"',
         masked,
-        flags=re.IGNORECASE
-    )
-    # Mask parameter assignments in command lines or URLs
-    masked = re.sub(
-        r'((?:api_key|apikey|token|password|secret)=)[^\s&"\']+',
-        r'\1***[MASKED]***',
-        masked,
-        flags=re.IGNORECASE
     )
     return masked

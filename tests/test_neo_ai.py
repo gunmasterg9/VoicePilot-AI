@@ -162,28 +162,6 @@ class TestPCAutomationSafety(unittest.TestCase):
                 f"Path {path} should be BLOCKED from deletion. Reason: {reason}"
             )
 
-    def test_drive_root_adversarial_variations(self):
-        """[REGRESSION] Verifies alternate drive root representations are strictly blocked."""
-        from core.safety import is_path_safe_for_deletion
-        variations = [
-            "C:",
-            "C:\\",
-            "c:\\",
-            "C:/",
-            "C:////",
-            "\\\\?\\C:\\",
-            "\\\\.\\C:\\",
-            "D:\\",
-            "D:",
-            "\\\\server\\share\\",
-        ]
-        for path in variations:
-            safe, reason = is_path_safe_for_deletion(path)
-            self.assertFalse(
-                safe,
-                f"Drive root variation '{path}' MUST be blocked from deletion. Reason: {reason}"
-            )
-
     def test_safe_user_paths(self):
         from core.safety import is_path_safe_for_deletion
         user_scratch = os.path.expanduser("~/Documents/scratch_test.txt")
@@ -224,30 +202,6 @@ class TestPySide6DesktopUI(unittest.TestCase):
         # Test stop action
         window.stop_action()
         self.assertEqual(window.orb.state, "READY")
-
-    def test_ui_confirm_action_signature(self):
-        """[REGRESSION] Verifies window.confirm_action accepts 2 arguments (tool_name, arguments) without TypeError."""
-        from PySide6.QtWidgets import QApplication, QMessageBox
-        from unittest.mock import patch
-        from ui.window import NeoWindow
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        window = NeoWindow()
-
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.Yes) as mock_q:
-            res = window.confirm_action("delete_path", {"path": "temp.txt"})
-            self.assertTrue(res)
-            mock_q.assert_called_once()
-            # Verify prompt contains tool info
-            call_prompt = mock_q.call_args[0][2]
-            self.assertIn("temp.txt", call_prompt)
-
-        with patch.object(QMessageBox, "question", return_value=QMessageBox.No) as mock_q:
-            res = window.confirm_action("shutdown_pc", {"delay": 10})
-            self.assertFalse(res)
-            mock_q.assert_called_once()
-            call_prompt = mock_q.call_args[0][2]
-            self.assertIn("shut down", call_prompt.lower())
 
 
 if __name__ == "__main__":

@@ -31,7 +31,11 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     # Speech Recognition
     "whisper_model": "tiny.en",
     "speech_language": "en",          # "en", "hi", "gu", or "auto"
-    "mic_device_index": MICROPHONE_INDEX,
+    "mic_device_index": MICROPHONE_INDEX, # None = Auto-detect best physical mic
+    "mic_device_name": "",            # Persisted device name for index shift resilience
+    "mic_energy_threshold": 300,      # Base energy threshold (150-2500)
+    "mic_dynamic_energy": True,       # Adaptive threshold tracking
+    "mic_ambient_duration": 0.4,      # Noise calibration duration (seconds)
 
     # Text to Speech
     "tts_provider": "online",         # "online" (edge-tts) or "offline" (sapi5)
