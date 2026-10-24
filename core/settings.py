@@ -18,13 +18,10 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "assistant_name": NEO_NAME,
     "tagline": "Your Local AI PC Assistant",
 
-    # AI Brain
-    "ai_provider": "ollama",          # "ollama" or "cloud"
+    # AI Brain (100% Local & Offline)
+    "ai_provider": "ollama",
     "ollama_host": "http://127.0.0.1:11434",
     "ollama_model": OLLAMA_MODEL,
-    "cloud_api_key": "",
-    "cloud_base_url": "https://api.openai.com/v1",
-    "cloud_model": "gpt-4o-mini",
     "llm_timeout": 60,
     "max_history_turns": 8,
 
@@ -38,7 +35,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "mic_ambient_duration": 0.4,      # Noise calibration duration (seconds)
 
     # Text to Speech
-    "tts_provider": "online",         # "online" (edge-tts) or "offline" (sapi5)
+    "tts_enabled": True,              # Master toggle for voice output
+    "tts_provider": "offline",        # "offline" (sapi5) default for 100% offline operation
     "tts_voice_online": "en-US-AriaNeural",
     "tts_voice_offline_index": 0,
     "tts_output_device_index": None,  # None = System default output
@@ -72,9 +70,12 @@ class SettingsManager:
                 with open(self.filepath, "r", encoding="utf-8") as f:
                     saved = json.load(f)
                 if isinstance(saved, dict):
-                    # Backward-compatible migration of legacy keys
+                    # Backward-compatible migration of legacy keys (ignoring obsolete cloud keys)
+                    obsolete_cloud_keys = {"cloud_api_key", "cloud_base_url", "cloud_model"}
                     migrated = {}
                     for k, v in saved.items():
+                        if k in obsolete_cloud_keys:
+                            continue
                         lower_k = k.lower()
                         if lower_k.startswith("orion_"):
                             suffix = lower_k[6:]
@@ -86,7 +87,7 @@ class SettingsManager:
                                 migrated["tts_mode"] = v
                             elif suffix in ["name", "assistant_name"]:
                                 migrated["assistant_name"] = v
-                            else:
+                            elif suffix not in obsolete_cloud_keys:
                                 migrated[suffix] = v
                         else:
                             migrated[k] = v
@@ -97,17 +98,24 @@ class SettingsManager:
         return self._settings
 
     def save(self) -> bool:
-        """Persists current settings to disk."""
+        """Persists current settings to disk (guaranteeing no cloud keys are written)."""
         try:
             self.filepath.parent.mkdir(parents=True, exist_ok=True)
+            # Ensure obsolete cloud keys are never written to disk
+            clean_settings = {
+                k: v for k, v in self._settings.items()
+                if k not in {"cloud_api_key", "cloud_base_url", "cloud_model"}
+            }
             with open(self.filepath, "w", encoding="utf-8") as f:
-                json.dump(self._settings, f, indent=4, ensure_ascii=False)
+                json.dump(clean_settings, f, indent=4, ensure_ascii=False)
             return True
         except Exception as exc:
             print(f"[ERROR] Failed to save settings: {exc}")
             return False
 
     def get(self, key: str, default: Any = None) -> Any:
+        if key in {"cloud_api_key", "cloud_base_url", "cloud_model"}:
+            return "" if key == "cloud_api_key" else default
         return self._settings.get(key, default if default is not None else DEFAULT_SETTINGS.get(key))
 
     def set(self, key: str, value: Any, save: bool = True) -> None:

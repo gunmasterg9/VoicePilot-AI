@@ -532,15 +532,52 @@ class VoiceInterface:
                 except Exception:
                     pass
 
-                self.output("NEO > Speak now...")
-                audio = self.recognizer.listen(
-                    source,
-                    timeout=8,
-                    phrase_time_limit=20
+                calibrated_threshold = float(self.recognizer.energy_threshold)
+                self.output(
+                    f"NEO > Microphone ready. Calibrated speech threshold: "
+                    f"{calibrated_threshold:.0f}. Speak now..."
                 )
 
+                # A raw microphone meter can show audio while SpeechRecognition
+                # still misses quiet speech if the calibrated threshold is high.
+                # Retry once with a bounded, more sensitive threshold rather than
+                # silently failing or permanently weakening the recognizer.
+                original_dynamic_threshold = self.recognizer.dynamic_energy_threshold
+                audio = None
+                try:
+                    for attempt in range(2):
+                        try:
+                            audio = self.recognizer.listen(
+                                source,
+                                timeout=8,
+                                phrase_time_limit=20
+                            )
+                            if attempt:
+                                self.output("NEO > Speech captured on the sensitivity retry.")
+                            break
+                        except sr.WaitTimeoutError:
+                            if attempt == 1:
+                                raise
+
+                            current_threshold = float(self.recognizer.energy_threshold)
+                            retry_threshold = max(
+                                80.0,
+                                min(current_threshold * 0.55, 250.0)
+                            )
+                            self.recognizer.energy_threshold = retry_threshold
+                            self.recognizer.dynamic_energy_threshold = False
+                            self.output(
+                                "NEO > No speech trigger detected yet. Retrying once "
+                                f"with increased microphone sensitivity "
+                                f"(threshold {retry_threshold:.0f}). Speak clearly now..."
+                            )
+                finally:
+                    # Do not persist the temporary retry threshold into later sessions.
+                    self.recognizer.dynamic_energy_threshold = original_dynamic_threshold
+                    self.recognizer.energy_threshold = calibrated_threshold
+
             self.output("NEO > Speech captured.")
-            self.state("THINKING")
+            self.state("TRANSCRIBING")
             self.output("NEO > Transcribing locally...")
 
             wav_path = self._audio_to_wav(audio)
@@ -549,14 +586,20 @@ class VoiceInterface:
             if text is None or not text.strip():
                 # Clearly distinguish empty transcript from capture timeout
                 self.output("NEO > Speech captured, but no discernible words were recognized.")
-                self.state("READY")
+                self.state("IDLE")
                 return None
 
             self.output(f"YOU > {text}")
+            self.state("ROUTING")
             return text
 
         except sr.WaitTimeoutError:
-            self.output("NEO > No speech detected within 8s. (Tip: Speak closer to your microphone or check microphone selection in Settings).")
+            self.output(
+                "NEO > No speech detected after two listening attempts. "
+                "The microphone may be active but the speech signal may be too quiet "
+                "for detection. Check the selected input device and Windows input level "
+                "in Settings, then try speaking closer to the microphone."
+            )
         except OSError as exc:
             self.state("ERROR")
             self.output(f"NEO > [ERROR] Could not open microphone [{device_index}] '{device_name}': {exc}. "
@@ -571,7 +614,7 @@ class VoiceInterface:
                 except Exception:
                     pass
 
-        self.state("READY")
+        self.state("IDLE")
         return None
 
     # ============================================================
@@ -581,20 +624,29 @@ class VoiceInterface:
     def process_voice_command(self) -> Optional[str]:
         command = self.listen_once()
         if not command:
+            self.state("IDLE")
             return None
 
         try:
-            self.state("THINKING")
-            self.output("NEO > Thinking...")
+            from core.router import route_direct_command
+            routed = route_direct_command(command)
+            if routed or (hasattr(self.agent, "_direct_command") and self.agent._direct_command(command)):
+                self.state("EXECUTING")
+                self.output("NEO > Executing local command...")
+            else:
+                self.state("THINKING")
+                self.output("NEO > Thinking...")
 
             response = self.agent.run(command)
             if response is None:
                 response = "Command completed."
 
             self.speak(response)
+            self.state("IDLE")
             return response
 
         except Exception as exc:
-            self.state("READY")
+            self.state("ERROR")
             self.output(f"NEO > Agent error: {exc}")
+            self.state("IDLE")
             return None

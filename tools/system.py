@@ -90,3 +90,39 @@ def cancel_shutdown() -> str:
         ["shutdown", "/a"]
     )
     return "Pending shutdown or restart cancelled."
+
+
+def volume_up(steps: int = 5) -> str:
+    """Increases system audio volume."""
+    import pyautogui
+    for _ in range(max(1, min(int(steps), 25))):
+        pyautogui.press("volumeup")
+    return "Increased system volume."
+
+
+def volume_down(steps: int = 5) -> str:
+    """Decreases system audio volume."""
+    import pyautogui
+    for _ in range(max(1, min(int(steps), 25))):
+        pyautogui.press("volumedown")
+    return "Decreased system volume."
+
+
+def volume_mute() -> str:
+    """Toggles system audio mute."""
+    import pyautogui
+    pyautogui.press("volumemute")
+    return "Toggled system volume mute."
+
+
+def get_system_info() -> str:
+    """Returns comprehensive system information and resource metrics."""
+    return get_system_telemetry("all")
+
+
+def take_screenshot(path=None) -> str:
+    """Captures a screenshot of the current screen."""
+    from tools.computer import screenshot
+    return screenshot(path)
+
+

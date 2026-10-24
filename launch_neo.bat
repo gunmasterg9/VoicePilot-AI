@@ -17,7 +17,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Starting NEO AI Desktop Assistant...
-python main.py --mode ui
+python main.py
 
 if %errorlevel% neq 0 (
     echo.

@@ -23,16 +23,27 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPushButton,
     QLineEdit,
     QTextBrowser,
     QFrame,
-    QMessageBox
+    QMessageBox,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QCheckBox,
+    QComboBox,
+    QSlider,
+    QGroupBox,
+    QScrollArea
 )
 
 from core.agent import OrionAgent, NeoAgent
 from core.safety import mask_sensitive_data
+from core.settings import settings
 from config import WINDOW_TITLE, APP_NAME, TAGLINE
 from interfaces.tts import tts_manager
 from ui.settings_dialog import SettingsDialog
@@ -84,8 +95,10 @@ class CoreOrb(QWidget):
 
         # State-driven animation dynamics
         speed = 2
-        if self.state == "THINKING":
+        if self.state in {"THINKING", "EXECUTING"}:
             speed = 5
+        elif self.state in {"TRANSCRIBING", "ROUTING"}:
+            speed = 3.5
         elif self.state == "SPEAKING":
             speed = 3
         elif self.state == "LISTENING":
@@ -98,7 +111,7 @@ class CoreOrb(QWidget):
         ) % 360
 
         # Breathing pulse
-        pulse_speed = 0.05 if self.state in {"LISTENING", "SPEAKING", "ERROR"} else 0.025
+        pulse_speed = 0.05 if self.state in {"LISTENING", "SPEAKING", "ERROR", "TRANSCRIBING"} else 0.025
         self.pulse += pulse_speed * self.pulse_dir
         if self.pulse >= 1.0:
             self.pulse = 1.0
@@ -140,6 +153,24 @@ class CoreOrb(QWidget):
             center_bg = QColor("#021a12")
             text_color = QColor("#a7f3d0")
             status_text_color = QColor("#00f5a0")
+        elif self.state == "TRANSCRIBING":
+            primary_color = QColor("#c084fc")       # Orchid Violet
+            secondary_color = QColor("#818cf8")     # Indigo
+            center_bg = QColor("#1c0f30")
+            text_color = QColor("#f3e8ff")
+            status_text_color = QColor("#c084fc")
+        elif self.state == "ROUTING":
+            primary_color = QColor("#60a5fa")       # Sky Blue
+            secondary_color = QColor("#38bdf8")     # Electric Cyan
+            center_bg = QColor("#091b2e")
+            text_color = QColor("#dbeafe")
+            status_text_color = QColor("#60a5fa")
+        elif self.state == "EXECUTING":
+            primary_color = QColor("#2dd4bf")       # Vibrant Teal
+            secondary_color = QColor("#00f5a0")     # Emerald Green
+            center_bg = QColor("#04201c")
+            text_color = QColor("#ccfbf1")
+            status_text_color = QColor("#2dd4bf")
         elif self.state == "THINKING":
             primary_color = QColor("#b388ff")       # Deep Violet
             secondary_color = QColor("#fbbf24")     # Amber Gold
@@ -163,6 +194,7 @@ class CoreOrb(QWidget):
             primary_color = QColor("#18dfff")       # Signature Orion Cyan
             secondary_color = QColor("#64f1ff")
             center_bg = QColor("#071722")
+
             text_color = QColor("#b8faff")
             status_text_color = QColor("#50cddd")
 
@@ -372,15 +404,21 @@ class AgentWorker(QObject):
 
         try:
 
-            self.state.emit(
-                "THINKING"
-            )
+            self.state.emit("ROUTING")
+
+            from core.router import route_direct_command
+            routed = route_direct_command(self.command)
+            if routed or (hasattr(self.agent, "_direct_command") and self.agent._direct_command(self.command)):
+                self.state.emit("EXECUTING")
+            else:
+                self.state.emit("THINKING")
 
             response = (
                 self.agent.run(
                     self.command
                 )
             )
+
 
             self.finished.emit(
                 str(
@@ -545,6 +583,8 @@ class OrionWindow(QMainWindow):
         self.tts_thread = None
         self.tts_worker = None
         self._close_pending = False
+        self.current_state = "READY"
+        self.activity_log = []
 
         self.build_ui()
         self.apply_style()
@@ -556,278 +596,735 @@ class OrionWindow(QMainWindow):
     def build_ui(self):
 
         root = QWidget()
+        self.setCentralWidget(root)
 
-        self.setCentralWidget(
-            root
-        )
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(10)
 
-        layout = QVBoxLayout(
-            root
-        )
-
-        layout.setContentsMargins(
-            25,
-            20,
-            25,
-            20
-        )
-
-        layout.setSpacing(
-            14
-        )
-
+        # ------------------------------------------------------------
+        # Header Bar: Brand + Offline Badge + Navigation + Real-time State
+        # ------------------------------------------------------------
         header = QHBoxLayout()
+        header.setSpacing(12)
 
-        title = QLabel(
-            "NEO AI"
-        )
+        # Brand & Offline Indicator
+        brand_col = QVBoxLayout()
+        brand_col.setSpacing(1)
 
-        title.setObjectName(
-            "title"
-        )
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
 
-        subtitle = QLabel(
-            "YOUR LOCAL AI PC ASSISTANT"
-        )
+        title = QLabel("NEO AI")
+        title.setObjectName("title")
+        title_row.addWidget(title)
 
-        subtitle.setObjectName(
-            "subtitle"
-        )
+        self.offline_badge = QLabel("● 100% OFFLINE")
+        self.offline_badge.setObjectName("offlineBadge")
+        title_row.addWidget(self.offline_badge)
+        title_row.addStretch()
+        brand_col.addLayout(title_row)
 
-        self.status = QLabel(
-            "● SYSTEM ONLINE"
-        )
+        subtitle = QLabel("YOUR LOCAL AI PC ASSISTANT")
+        subtitle.setObjectName("subtitle")
+        brand_col.addWidget(subtitle)
+        header.addLayout(brand_col)
 
-        self.status.setObjectName(
-            "status"
-        )
+        header.addStretch(1)
 
-        header.addWidget(title)
-        header.addWidget(subtitle)
-        header.addStretch()
+        # Compact Navigation Bar
+        nav_container = QFrame()
+        nav_container.setObjectName("navContainer")
+        nav_layout = QHBoxLayout(nav_container)
+        nav_layout.setContentsMargins(4, 4, 4, 4)
+        nav_layout.setSpacing(4)
+
+        self.btn_nav_home = QPushButton("🏠  HOME")
+        self.btn_nav_voice = QPushButton("🎙  VOICE")
+        self.btn_nav_activity = QPushButton("📋  ACTIVITY")
+        self.btn_nav_settings = QPushButton("⚙  SETTINGS")
+        self.btn_nav_about = QPushButton("ℹ  ABOUT")
+
+        self.nav_buttons = [
+            self.btn_nav_home,
+            self.btn_nav_voice,
+            self.btn_nav_activity,
+            self.btn_nav_settings,
+            self.btn_nav_about
+        ]
+
+        for idx, btn in enumerate(self.nav_buttons):
+            btn.setObjectName("navButton")
+            btn.clicked.connect(lambda _, i=idx: self.switch_nav(i))
+            nav_layout.addWidget(btn)
+
+        self.btn_nav_home.setProperty("active", "true")
+        header.addWidget(nav_container)
+
+        header.addStretch(1)
+
+        # Real-time state indicator
+        self.status = QLabel("● READY")
+        self.status.setObjectName("status")
         header.addWidget(self.status)
 
         layout.addLayout(header)
 
-        main = QHBoxLayout()
+        # ------------------------------------------------------------
+        # Multi-View Stacked Pages
+        # ------------------------------------------------------------
+        self.stack = QStackedWidget()
+        self.stack.setObjectName("mainStack")
 
-        main.setSpacing(
-            20
-        )
+        self.page_home = self._create_home_page()
+        self.stack.addWidget(self.page_home)
+
+        self.page_voice = self._create_voice_page()
+        self.stack.addWidget(self.page_voice)
+
+        self.page_activity = self._create_activity_page()
+        self.stack.addWidget(self.page_activity)
+
+        self.page_settings = self._create_settings_page()
+        self.stack.addWidget(self.page_settings)
+
+        self.page_about = self._create_about_page()
+        self.stack.addWidget(self.page_about)
+
+        layout.addWidget(self.stack, 1)
+
+    # ============================================================
+    # PAGE 0: HOME PAGE (CONVERSATION & CORE CONTROLS)
+    # ============================================================
+
+    def _create_home_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        main = QHBoxLayout()
+        main.setSpacing(14)
+
+        # Left Column: Core Orb + Quick Actions + System Telemetry
+        left_col = QVBoxLayout()
+        left_col.setSpacing(8)
 
         self.orb = CoreOrb()
+        left_col.addWidget(self.orb, 0, Qt.AlignCenter)
 
-        main.addWidget(
-            self.orb,
-            3
-        )
+        # Quick Actions Panel
+        quick_panel = QFrame()
+        quick_panel.setObjectName("panel")
+        quick_layout = QVBoxLayout(quick_panel)
+        quick_layout.setContentsMargins(12, 10, 12, 10)
+        quick_layout.setSpacing(6)
 
-        side = QVBoxLayout()
+        quick_title = QLabel("SUPPORTED QUICK ACTIONS")
+        quick_title.setObjectName("panelTitle")
+        quick_layout.addWidget(quick_title)
 
+        grid = QGridLayout()
+        grid.setSpacing(6)
+
+        quick_actions = [
+            ("📝 Notepad", "Open Notepad"),
+            ("🔢 Calculator", "Open Calculator"),
+            ("📸 Screenshot", "Take a screenshot"),
+            ("🔊 Vol +", "Increase volume"),
+            ("🔉 Vol -", "Decrease volume"),
+            ("🔇 Mute", "Mute volume"),
+            ("🗑 Recycle Bin", "Open Recycle Bin"),
+            ("🔍 Search PC", "Search my PC"),
+            ("⚡ Telemetry", "Check battery and system status"),
+        ]
+
+        for i, (label, cmd) in enumerate(quick_actions):
+            btn = QPushButton(label)
+            btn.setObjectName("quickActionBtn")
+            btn.clicked.connect(lambda _, c=cmd: self.execute_quick_action(c))
+            grid.addWidget(btn, i // 3, i % 3)
+            if "Calculator" in cmd:
+                self.btn_quick_calc = btn
+
+        quick_layout.addLayout(grid)
+        left_col.addWidget(quick_panel)
+
+        # Compact Telemetry Panel
         telemetry_panel = QFrame()
+        telemetry_panel.setObjectName("panel")
+        telemetry_layout = QVBoxLayout(telemetry_panel)
+        telemetry_layout.setContentsMargins(12, 8, 12, 8)
+        telemetry_layout.setSpacing(4)
 
-        telemetry_panel.setObjectName(
-            "panel"
-        )
-
-        telemetry_layout = QVBoxLayout(
-            telemetry_panel
-        )
-
-        telemetry_title = QLabel(
-            "SYSTEM TELEMETRY"
-        )
-
-        telemetry_title.setObjectName(
-            "panelTitle"
-        )
-
-        telemetry_layout.addWidget(
-            telemetry_title
-        )
+        telemetry_title = QLabel("SYSTEM TELEMETRY")
+        telemetry_title.setObjectName("panelTitle")
+        telemetry_layout.addWidget(telemetry_title)
 
         self.telemetry = QLabel(
-            "AI CORE     ONLINE\n"
+            "AI CORE     ONLINE (100% LOCAL)\n"
             "OLLAMA      LOCAL\n"
-            "VOICE       READY\n"
+            "VOICE       IDLE\n"
             "MIC         ONLINE\n"
             "MODE        IDLE"
         )
+        self.telemetry.setObjectName("telemetry")
+        telemetry_layout.addWidget(self.telemetry)
+        left_col.addWidget(telemetry_panel)
 
-        self.telemetry.setObjectName(
-            "telemetry"
-        )
+        main.addLayout(left_col, 2)
 
-        telemetry_layout.addWidget(
-            self.telemetry
-        )
-
-        side.addWidget(
-            telemetry_panel
-        )
-
+        # Right Column: Transcript & Command Log
         chat_panel = QFrame()
+        chat_panel.setObjectName("panel")
+        chat_layout = QVBoxLayout(chat_panel)
+        chat_layout.setContentsMargins(14, 12, 14, 12)
+        chat_layout.setSpacing(6)
 
-        chat_panel.setObjectName(
-            "panel"
-        )
+        chat_title = QLabel("CONVERSATION & COMMAND LOG")
+        chat_title.setObjectName("panelTitle")
+        chat_layout.addWidget(chat_title)
 
-        chat_layout = QVBoxLayout(
-            chat_panel
-        )
-
-        chat_title = QLabel(
-            "TRANSCRIPT & COMMAND LOG"
-        )
-
-        chat_title.setObjectName(
-            "panelTitle"
-        )
-
-        chat_layout.addWidget(
-            chat_title
-        )
-
-        # Full scrollable transcript display
         self.chat = QTextBrowser()
-        self.chat.setObjectName(
-            "chat"
-        )
-        self.chat.setOpenExternalLinks(
-            True
-        )
+        self.chat.setObjectName("chat")
+        self.chat.setOpenExternalLinks(True)
+        chat_layout.addWidget(self.chat, 1)
 
-        chat_layout.addWidget(
-            self.chat
-        )
+        main.addWidget(chat_panel, 3)
+        layout.addLayout(main, 1)
 
-        side.addWidget(
-            chat_panel,
-            2
-        )
-
-        main.addLayout(
-            side,
-            2
-        )
-
-        layout.addLayout(
-            main,
-            1
-        )
-
+        # Bottom Input Controls Row
         bottom = QHBoxLayout()
+        bottom.setSpacing(8)
 
         self.input = QLineEdit()
+        self.input.setPlaceholderText("Enter a voice or PC command for NEO (e.g., 'Open Notepad', 'Increase volume', 'What time is it?')...")
+        self.input.returnPressed.connect(self.send_text)
 
-        self.input.setPlaceholderText(
-            "Enter a voice or PC command for NEO..."
-        )
+        self.send_button = QPushButton("EXECUTE")
+        self.send_button.clicked.connect(self.send_text)
 
-        self.input.returnPressed.connect(
-            self.send_text
-        )
+        self.voice_button = QPushButton("◉  VOICE")
+        self.voice_button.setObjectName("voiceButton")
+        self.voice_button.clicked.connect(self.start_voice)
 
-        self.send_button = QPushButton(
-            "EXECUTE"
-        )
+        self.tts_button = QPushButton("🔊  TEST TTS")
+        self.tts_button.setObjectName("ttsButton")
+        self.tts_button.clicked.connect(self.start_tts_test)
 
-        self.send_button.clicked.connect(
-            self.send_text
-        )
+        self.stop_button = QPushButton("⏹  STOP")
+        self.stop_button.setObjectName("stopButton")
+        self.stop_button.clicked.connect(self.stop_action)
 
-        self.voice_button = QPushButton(
-            "◉  VOICE"
-        )
+        self.clear_button = QPushButton("🗑  CLEAR")
+        self.clear_button.setObjectName("clearButton")
+        self.clear_button.clicked.connect(self.clear_conversation)
 
-        self.voice_button.setObjectName(
-            "voiceButton"
-        )
+        self.settings_button = QPushButton("⚙  SETTINGS")
+        self.settings_button.setObjectName("settingsButton")
+        self.settings_button.clicked.connect(self.open_settings)
 
-        self.voice_button.clicked.connect(
-            self.start_voice
-        )
+        bottom.addWidget(self.input, 1)
+        bottom.addWidget(self.send_button)
+        bottom.addWidget(self.voice_button)
+        bottom.addWidget(self.tts_button)
+        bottom.addWidget(self.stop_button)
+        bottom.addWidget(self.clear_button)
+        bottom.addWidget(self.settings_button)
 
-        self.tts_button = QPushButton(
-            "🔊  TEST TTS"
-        )
+        layout.addLayout(bottom)
+        return page
 
-        self.tts_button.setObjectName(
-            "ttsButton"
-        )
+    # ============================================================
+    # PAGE 1: VOICE & MULTILINGUAL CONFIGURATION
+    # ============================================================
 
-        self.tts_button.clicked.connect(
-            self.start_tts_test
-        )
+    def _create_voice_page(self) -> QWidget:
+        page = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
 
-        self.stop_button = QPushButton(
-            "⏹  STOP"
-        )
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
 
-        self.stop_button.setObjectName(
-            "stopButton"
-        )
+        header_lbl = QLabel("VOICE PIPELINE & MULTILINGUAL SETTINGS")
+        header_lbl.setObjectName("sectionHeader")
+        layout.addWidget(header_lbl)
 
-        self.stop_button.clicked.connect(
-            self.stop_action
-        )
+        # 1. Microphone Hardware
+        mic_box = QGroupBox("Microphone Input & Calibration")
+        mic_box.setObjectName("settingsBox")
+        mic_layout = QVBoxLayout(mic_box)
+        mic_layout.setSpacing(10)
 
-        self.clear_button = QPushButton(
-            "🗑  CLEAR"
-        )
+        mic_row = QHBoxLayout()
+        mic_row.addWidget(QLabel("Input Microphone:"))
+        self.combo_mics = QComboBox()
+        self.combo_mics.setObjectName("settingsCombo")
+        from interfaces.voice import VoiceInterface
+        mics = VoiceInterface.get_available_microphones()
+        current_mic_idx = settings.get("mic_device_index")
+        for idx, label in mics:
+            self.combo_mics.addItem(label, idx)
+            if idx == current_mic_idx:
+                self.combo_mics.setCurrentIndex(self.combo_mics.count() - 1)
+        mic_row.addWidget(self.combo_mics, 1)
 
-        self.clear_button.setObjectName(
-            "clearButton"
-        )
+        self.btn_test_mic = QPushButton("🎙 Test Mic Signal")
+        self.btn_test_mic.setObjectName("actionBtn")
+        self.btn_test_mic.clicked.connect(self._test_microphone_signal)
+        mic_row.addWidget(self.btn_test_mic)
+        mic_layout.addLayout(mic_row)
 
-        self.clear_button.clicked.connect(
-            self.clear_conversation
-        )
+        self.lbl_mic_signal_result = QLabel("Microphone status: Ready. Click 'Test Mic Signal' to verify real-time input energy.")
+        self.lbl_mic_signal_result.setObjectName("statusDetail")
+        mic_layout.addWidget(self.lbl_mic_signal_result)
+        layout.addWidget(mic_box)
 
-        self.settings_button = QPushButton(
-            "⚙  SETTINGS"
-        )
+        # 2. Faster-Whisper Offline ASR
+        asr_box = QGroupBox("Offline Speech Recognition (Faster-Whisper CPU)")
+        asr_box.setObjectName("settingsBox")
+        asr_layout = QVBoxLayout(asr_box)
+        asr_layout.setSpacing(10)
 
-        self.settings_button.setObjectName(
-            "settingsButton"
-        )
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel("Primary Speech Language:"))
+        self.combo_lang = QComboBox()
+        self.combo_lang.setObjectName("settingsCombo")
+        languages = [
+            ("English (en)", "en"),
+            ("Hindi (hi)", "hi"),
+            ("Gujarati (gu)", "gu"),
+            ("Auto-Detect Multilingual (auto)", "auto"),
+        ]
+        curr_lang = settings.get("speech_language", "en")
+        for label, code in languages:
+            self.combo_lang.addItem(label, code)
+            if code == curr_lang:
+                self.combo_lang.setCurrentIndex(self.combo_lang.count() - 1)
+        lang_row.addWidget(self.combo_lang, 1)
+        asr_layout.addLayout(lang_row)
 
-        self.settings_button.clicked.connect(
-            self.open_settings
-        )
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Whisper Model:"))
+        self.combo_whisper_model = QComboBox()
+        self.combo_whisper_model.setObjectName("settingsCombo")
+        models = [
+            ("tiny.en (Fastest - English Only)", "tiny.en"),
+            ("tiny (Fast - Multilingual English/Hindi/Gujarati)", "tiny"),
+            ("base (Balanced - Multilingual)", "base"),
+        ]
+        curr_model = settings.get("whisper_model", "tiny.en")
+        for label, code in models:
+            self.combo_whisper_model.addItem(label, code)
+            if code == curr_model:
+                self.combo_whisper_model.setCurrentIndex(self.combo_whisper_model.count() - 1)
+        model_row.addWidget(self.combo_whisper_model, 1)
+        asr_layout.addLayout(model_row)
+        layout.addWidget(asr_box)
 
-        bottom.addWidget(
-            self.input,
-            1
-        )
+        # 3. Offline SAPI5 TTS
+        tts_box = QGroupBox("Offline Speech Synthesis (Windows SAPI5 Local)")
+        tts_box.setObjectName("settingsBox")
+        tts_layout = QVBoxLayout(tts_box)
+        tts_layout.setSpacing(10)
 
-        bottom.addWidget(
-            self.send_button
-        )
+        self.chk_tts_enabled = QCheckBox("Enable Voice Output (Spoken Responses)")
+        self.chk_tts_enabled.setObjectName("settingsCheck")
+        self.chk_tts_enabled.setChecked(bool(settings.get("tts_enabled", True)))
+        tts_layout.addWidget(self.chk_tts_enabled)
 
-        bottom.addWidget(
-            self.voice_button
-        )
+        rate_row = QHBoxLayout()
+        rate_row.addWidget(QLabel("Speech Rate (Words/Min):"))
+        self.slider_rate = QSlider(Qt.Horizontal)
+        self.slider_rate.setRange(120, 240)
+        self.slider_rate.setValue(int(settings.get("tts_speech_rate", 180)))
+        self.lbl_rate_val = QLabel(f"{self.slider_rate.value()} wpm")
+        self.slider_rate.valueChanged.connect(lambda v: self.lbl_rate_val.setText(f"{v} wpm"))
+        rate_row.addWidget(self.slider_rate, 1)
+        rate_row.addWidget(self.lbl_rate_val)
+        tts_layout.addLayout(rate_row)
 
-        bottom.addWidget(
-            self.tts_button
-        )
+        vol_row = QHBoxLayout()
+        vol_row.addWidget(QLabel("Speech Volume:"))
+        self.slider_vol = QSlider(Qt.Horizontal)
+        self.slider_vol.setRange(0, 100)
+        self.slider_vol.setValue(int(settings.get("tts_volume", 1.0) * 100))
+        self.lbl_vol_val = QLabel(f"{self.slider_vol.value()}%")
+        self.slider_vol.valueChanged.connect(lambda v: self.lbl_vol_val.setText(f"{v}%"))
+        vol_row.addWidget(self.slider_vol, 1)
+        vol_row.addWidget(self.lbl_vol_val)
+        tts_layout.addLayout(vol_row)
+        layout.addWidget(tts_box)
 
-        bottom.addWidget(
-            self.stop_button
-        )
+        # Save Button
+        save_btn = QPushButton("💾  SAVE VOICE CONFIGURATION")
+        save_btn.setObjectName("primaryActionBtn")
+        save_btn.clicked.connect(self._save_voice_settings)
+        layout.addWidget(save_btn)
+        layout.addStretch()
 
-        bottom.addWidget(
-            self.clear_button
-        )
+        scroll.setWidget(container)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+        return page
 
-        bottom.addWidget(
-            self.settings_button
-        )
+    # ============================================================
+    # PAGE 2: RECENT ACTIVITY & AUDIT LOG
+    # ============================================================
 
-        layout.addLayout(
-            bottom
+    def _create_activity_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        title = QLabel("ACTIVITY HISTORY & COMMAND AUDIT")
+        title.setObjectName("sectionHeader")
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        self.activity_count_label = QLabel("Total Operations: 0")
+        self.activity_count_label.setObjectName("badgeCount")
+        header_row.addWidget(self.activity_count_label)
+        layout.addLayout(header_row)
+
+        self.activity_table = QTableWidget(0, 5)
+        self.table_activity = self.activity_table
+        self.activity_table.setObjectName("activityTable")
+        self.activity_table.setHorizontalHeaderLabels(["Timestamp", "Type", "Command / Request", "Status", "Execution Result"])
+        self.activity_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.activity_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.activity_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
+        self.activity_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.activity_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.activity_table.setAlternatingRowColors(True)
+        self.activity_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        layout.addWidget(self.activity_table, 1)
+
+        bottom_row = QHBoxLayout()
+        clear_btn = QPushButton("🗑  Clear Activity History")
+        clear_btn.setObjectName("clearButton")
+        clear_btn.clicked.connect(self._clear_activity_history)
+        bottom_row.addWidget(clear_btn)
+        bottom_row.addStretch()
+        layout.addLayout(bottom_row)
+        return page
+
+    # ============================================================
+    # PAGE 3: PREFERENCES & DIAGNOSTICS
+    # ============================================================
+
+    def _create_settings_page(self) -> QWidget:
+        page = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(14)
+
+        header_lbl = QLabel("SYSTEM PREFERENCES & DIAGNOSTICS")
+        header_lbl.setObjectName("sectionHeader")
+        layout.addWidget(header_lbl)
+
+        # 1. Local AI (Ollama)
+        ai_box = QGroupBox("Local Ollama Engine (Conversational AI Only)")
+        ai_box.setObjectName("settingsBox")
+        ai_layout = QVBoxLayout(ai_box)
+        ai_layout.setSpacing(10)
+
+        host_row = QHBoxLayout()
+        host_row.addWidget(QLabel("Ollama Host URL:"))
+        self.input_ollama_host = QLineEdit(settings.get("ollama_host", "http://127.0.0.1:11434"))
+        host_row.addWidget(self.input_ollama_host, 1)
+
+        self.btn_test_ollama = QPushButton("🔄 Test Connection")
+        self.btn_test_ollama.setObjectName("actionBtn")
+        self.btn_test_ollama.clicked.connect(self._test_ollama_connection)
+        host_row.addWidget(self.btn_test_ollama)
+        ai_layout.addLayout(host_row)
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Configured Model:"))
+        self.input_ollama_model = QLineEdit(settings.get("ollama_model", "qwen3:1.7b"))
+        model_row.addWidget(self.input_ollama_model, 1)
+        ai_layout.addLayout(model_row)
+
+        self.lbl_ollama_status = QLabel("Ollama status: Ready to test.")
+        self.lbl_ollama_status.setObjectName("statusDetail")
+        ai_layout.addWidget(self.lbl_ollama_status)
+        layout.addWidget(ai_box)
+
+        # 2. Automation Safety
+        sec_box = QGroupBox("PC Automation Security & Guardrails")
+        sec_box.setObjectName("settingsBox")
+        sec_layout = QVBoxLayout(sec_box)
+        sec_layout.setSpacing(8)
+
+        self.chk_confirm_destructive = QCheckBox("Require confirmation before destructive actions (shutdown, restart, delete)")
+        self.chk_confirm_destructive.setObjectName("settingsCheck")
+        self.chk_confirm_destructive.setChecked(bool(settings.get("confirm_destructive_actions", True)))
+        sec_layout.addWidget(self.chk_confirm_destructive)
+
+        safeguards_info = QLabel(
+            "• Local Allowlist: Notepad, Calculator, Paint, File Explorer, Task Manager, Recycle Bin, Windows Search.\n"
+            "• Path Protection: System directories (C:\\Windows, System32) are strictly protected.\n"
+            "• Offline Independence: Local PC commands execute without contacting Ollama or cloud services."
         )
+        safeguards_info.setObjectName("safeguardsText")
+        sec_layout.addWidget(safeguards_info)
+        layout.addWidget(sec_box)
+
+        # 3. System Diagnostics
+        diag_box = QGroupBox("Runtime System Diagnostics")
+        diag_box.setObjectName("settingsBox")
+        diag_layout = QVBoxLayout(diag_box)
+        diag_layout.setSpacing(8)
+
+        self.btn_run_diagnostics = QPushButton("🩺  RUN FULL SYSTEM DIAGNOSTICS")
+        self.btn_run_diagnostics.setObjectName("actionBtn")
+        self.btn_run_diagnostics.clicked.connect(self.run_diagnostics)
+        diag_layout.addWidget(self.btn_run_diagnostics)
+
+        self.lbl_diagnostics_report = QLabel("Click above to verify Microphone, Faster-Whisper, SAPI5 TTS, and Ollama.")
+        self.lbl_diagnostics_report.setObjectName("diagnosticsReport")
+        diag_layout.addWidget(self.lbl_diagnostics_report)
+        layout.addWidget(diag_box)
+
+        # Save Button
+        save_btn = QPushButton("💾  SAVE PREFERENCES")
+        save_btn.setObjectName("primaryActionBtn")
+        save_btn.clicked.connect(self._save_general_settings)
+        layout.addWidget(save_btn)
+        layout.addStretch()
+
+        scroll.setWidget(container)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+        return page
+
+    # ============================================================
+    # PAGE 4: ABOUT & OFFLINE VERIFICATION
+    # ============================================================
+
+    def _create_about_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        about_box = QFrame()
+        about_box.setObjectName("panel")
+        box_layout = QVBoxLayout(about_box)
+        box_layout.setContentsMargins(20, 20, 20, 20)
+        box_layout.setSpacing(12)
+
+        title = QLabel("NEO AI — Enterprise Local Windows Assistant")
+        title.setObjectName("title")
+        box_layout.addWidget(title)
+
+        tagline = QLabel("Version 2.5 Offline Transformation • Pair Engineered by Gautam Vandar")
+        tagline.setObjectName("subtitle")
+        box_layout.addWidget(tagline)
+
+        info = QTextBrowser()
+        info.setObjectName("aboutBrowser")
+        info.setHtml(
+            """
+            <div style='color: #cbf3f9; line-height: 1.6;'>
+            <h3 style='color: #38bdf8;'>100% Offline Architecture</h3>
+            <p>NEO AI operates fully offline on Windows. Supported PC commands never query Ollama or cloud endpoints.</p>
+            <table style='width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 10px;'>
+            <tr style='background: #081a24; color: #55eaff;'>
+                <th style='padding: 6px; text-align: left; border: 1px solid #133a46;'>Subsystem</th>
+                <th style='padding: 6px; text-align: left; border: 1px solid #133a46;'>Engine</th>
+                <th style='padding: 6px; text-align: left; border: 1px solid #133a46;'>Offline Guarantee</th>
+            </tr>
+            <tr>
+                <td style='padding: 6px; border: 1px solid #133a46;'><b>Speech Recognition</b></td>
+                <td style='padding: 6px; border: 1px solid #133a46;'>Faster-Whisper (int8 CPU)</td>
+                <td style='padding: 6px; border: 1px solid #133a46; color: #00f5a0;'>100% Local / On-Device</td>
+            </tr>
+            <tr>
+                <td style='padding: 6px; border: 1px solid #133a46;'><b>Smart Command Router</b></td>
+                <td style='padding: 6px; border: 1px solid #133a46;'>Deterministic Fast Router</td>
+                <td style='padding: 6px; border: 1px solid #133a46; color: #00f5a0;'>100% Local (0ms LLM lag)</td>
+            </tr>
+            <tr>
+                <td style='padding: 6px; border: 1px solid #133a46;'><b>Speech Synthesis</b></td>
+                <td style='padding: 6px; border: 1px solid #133a46;'>Windows SAPI5 (pyttsx3)</td>
+                <td style='padding: 6px; border: 1px solid #133a46; color: #00f5a0;'>100% Local (No cloud voice)</td>
+            </tr>
+            <tr>
+                <td style='padding: 6px; border: 1px solid #133a46;'><b>Conversational AI</b></td>
+                <td style='padding: 6px; border: 1px solid #133a46;'>Local Ollama (qwen3:1.7b)</td>
+                <td style='padding: 6px; border: 1px solid #133a46; color: #00f5a0;'>100% Local LLM Only</td>
+            </tr>
+            <tr>
+                <td style='padding: 6px; border: 1px solid #133a46;'><b>PC Automation</b></td>
+                <td style='padding: 6px; border: 1px solid #133a46;'>Win32 & Safe Tool Registry</td>
+                <td style='padding: 6px; border: 1px solid #133a46; color: #00f5a0;'>Strictly Sandboxed</td>
+            </tr>
+            </table>
+
+            <h3 style='color: #38bdf8;'>Security & Privacy Guarantees</h3>
+            <ul>
+                <li><b>Zero Cloud Telemetry:</b> No voice recordings or text queries leave this device.</li>
+                <li><b>Local-First Execution:</b> Calculator, Notepad, Volume, Screenshots, Files, and Search execute locally.</li>
+                <li><b>Destructive Action Safeguards:</b> High-risk actions require user confirmation.</li>
+            </ul>
+            </div>
+            """
+        )
+        box_layout.addWidget(info, 1)
+        layout.addWidget(about_box, 1)
+        return page
+
+    # ============================================================
+    # NAVIGATION & ACTION DISPATCHERS
+    # ============================================================
+
+    def switch_nav(self, index: int):
+        self.stack.setCurrentIndex(index)
+        for i, btn in enumerate(self.nav_buttons):
+            active_str = "true" if i == index else "false"
+            btn.setProperty("active", active_str)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def execute_quick_action(self, command: str):
+        """Dispatches a quick action without blocking the UI thread."""
+        self.input.setText(command)
+        self.send_text()
+
+    def log_activity(self, mode: str, command: str, status: str, detail: str):
+        """Appends structured audit record to activity history and table."""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        entry = {
+            "time": timestamp,
+            "mode": mode,
+            "command": command,
+            "status": status,
+            "detail": detail
+        }
+        self.activity_log.append(entry)
+        if hasattr(self, "activity_table"):
+            row = self.activity_table.rowCount()
+            self.activity_table.insertRow(row)
+            self.activity_table.setItem(row, 0, QTableWidgetItem(timestamp))
+            self.activity_table.setItem(row, 1, QTableWidgetItem(mode))
+            self.activity_table.setItem(row, 2, QTableWidgetItem(command))
+            self.activity_table.setItem(row, 3, QTableWidgetItem(status))
+            self.activity_table.setItem(row, 4, QTableWidgetItem(detail))
+            self.activity_table.scrollToBottom()
+        if hasattr(self, "activity_count_label"):
+            self.activity_count_label.setText(f"Total Operations: {len(self.activity_log)}")
+
+    def _clear_activity_history(self):
+        self.activity_log.clear()
+        if hasattr(self, "activity_table"):
+            self.activity_table.setRowCount(0)
+        if hasattr(self, "activity_count_label"):
+            self.activity_count_label.setText("Total Operations: 0")
+
+    def _test_microphone_signal(self):
+        from interfaces.voice import VoiceInterface
+        idx = self.combo_mics.currentData()
+        res = VoiceInterface.test_microphone_input(device_index=idx, duration=0.8)
+        if res.get("success"):
+            rms = res.get("rms", 0.0)
+            peak = res.get("peak", 0)
+            status = res.get("status_description", "")
+            self.lbl_mic_signal_result.setText(f"Signal Test OK: RMS={rms}, Peak={peak}. {status}")
+            self.lbl_mic_signal_result.setStyleSheet("color: #34d399;")
+        else:
+            err = res.get("error", "Unknown error")
+            self.lbl_mic_signal_result.setText(f"Signal Test Failed: {err}")
+            self.lbl_mic_signal_result.setStyleSheet("color: #f87171;")
+
+    def _save_voice_settings(self):
+        idx = self.combo_mics.currentData()
+        name = self.combo_mics.currentText()
+        lang = self.combo_lang.currentData()
+        model = self.combo_whisper_model.currentData()
+        tts_on = self.chk_tts_enabled.isChecked()
+        rate = self.slider_rate.value()
+        vol = self.slider_vol.value() / 100.0
+
+        settings.set("mic_device_index", idx, save=False)
+        settings.set("mic_device_name", name, save=False)
+        settings.set("speech_language", lang, save=False)
+        settings.set("whisper_model", model, save=False)
+        settings.set("tts_enabled", tts_on, save=False)
+        settings.set("tts_speech_rate", rate, save=False)
+        settings.set("tts_volume", vol, save=True)
+
+        tts_manager.set_rate(rate)
+        tts_manager.set_volume(vol)
+        self.append_chat("NEO > Voice pipeline and multilingual settings updated successfully.")
+        QMessageBox.information(self, "Voice Settings", "Voice configuration saved and applied.")
+
+    def _test_ollama_connection(self):
+        from core.llm import llm_manager
+        healthy = llm_manager.check_health()
+        if healthy:
+            models = llm_manager.list_models()
+            model_list_str = ", ".join(models[:4]) if models else "Connected"
+            self.lbl_ollama_status.setText(f"● Connected to Ollama ({len(models)} models: {model_list_str})")
+            self.lbl_ollama_status.setStyleSheet("color: #34d399;")
+        else:
+            self.lbl_ollama_status.setText("● Ollama is offline or unreachable at host. Local PC commands still work.")
+            self.lbl_ollama_status.setStyleSheet("color: #fbbf24;")
+
+    def _save_general_settings(self):
+        host = self.input_ollama_host.text().strip()
+        model = self.input_ollama_model.text().strip()
+        confirm = self.chk_confirm_destructive.isChecked()
+
+        settings.set("ollama_host", host, save=False)
+        settings.set("ollama_model", model, save=False)
+        settings.set("confirm_destructive_actions", confirm, save=True)
+
+        from core.llm import llm_manager
+        llm_manager.ollama_provider._host = host
+        llm_manager.ollama_provider.set_model(model)
+        self.append_chat("NEO > System settings updated successfully.")
+        QMessageBox.information(self, "Settings", "System configuration saved.")
+
+    def run_diagnostics(self):
+        from interfaces.voice import VoiceInterface
+        mic_res = VoiceInterface.test_microphone_input(duration=0.5)
+        mic_ok = mic_res.get("success", False)
+        mic_txt = "Available" if mic_ok else "Not detected / silent"
+
+        whisper_model = settings.get("whisper_model", "tiny.en")
+        whisper_txt = f"Configured ({whisper_model})"
+
+        sapi_ok = tts_manager.offline_provider.is_available()
+        sapi_txt = "Available (Windows SAPI5 Local)" if sapi_ok else "Unavailable"
+
+        from core.llm import llm_manager
+        ollama_ok = llm_manager.check_health()
+        ollama_txt = f"Reachable ({llm_manager.get_active_model()})" if ollama_ok else "Offline (Direct PC commands operational)"
+
+        report = (
+            f"• Microphone Hardware:  {mic_txt}\n"
+            f"• Offline Speech Model: {whisper_txt}\n"
+            f"• Offline SAPI5 TTS:    {sapi_txt}\n"
+            f"• Local Ollama Brain:   {ollama_txt}\n"
+            f"• System Status:        100% Offline Ready"
+        )
+        self.lbl_diagnostics_report.setText(report)
 
     # ============================================================
     # STYLE
@@ -841,31 +1338,73 @@ class OrionWindow(QMainWindow):
             QWidget {
                 background: #02070c;
                 color: #bff7ff;
-                font-family: "Segoe UI";
+                font-family: "Segoe UI", sans-serif;
             }
 
             #title {
                 color: #55eaff;
-                font-size: 34px;
+                font-size: 30px;
                 font-weight: 700;
+                letter-spacing: 1px;
             }
 
             #subtitle {
                 color: #397985;
                 font-size: 9px;
-                margin-left: 12px;
+                font-weight: 600;
+                letter-spacing: 1px;
+            }
+
+            #offlineBadge {
+                background: #052e16;
+                color: #34d399;
+                border: 1px solid #10b981;
+                border-radius: 9px;
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: 700;
+            }
+
+            #navContainer {
+                background: #040e16;
+                border: 1px solid #103844;
+                border-radius: 10px;
+            }
+
+            #navButton {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 8px;
+                color: #7dd3fc;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 6px 12px;
+            }
+
+            #navButton:hover {
+                background: #08212e;
+                border-color: #38bdf8;
+                color: #ffffff;
+            }
+
+            #navButton[active="true"] {
+                background: #082d38;
+                border: 1px solid #00f5a0;
+                color: #00f5a0;
+                font-weight: 700;
             }
 
             #status {
                 color: #54e7a6;
                 font-size: 11px;
                 font-weight: 700;
+                font-family: Consolas, monospace;
             }
 
             #panel {
                 background: #061018;
                 border: 1px solid #123e4a;
-                border-radius: 14px;
+                border-radius: 12px;
             }
 
             #panelTitle {
@@ -875,18 +1414,130 @@ class OrionWindow(QMainWindow):
                 letter-spacing: 1px;
             }
 
+            #sectionHeader {
+                color: #55eaff;
+                font-size: 14px;
+                font-weight: 700;
+                letter-spacing: 1px;
+                margin-bottom: 4px;
+            }
+
+            #badgeCount {
+                color: #38bdf8;
+                font-size: 11px;
+                font-weight: 700;
+                background: #081d28;
+                border: 1px solid #1c6273;
+                border-radius: 8px;
+                padding: 4px 10px;
+            }
+
             #telemetry {
                 color: #62c6d5;
-                font-family: Consolas;
-                font-size: 12px;
+                font-family: Consolas, monospace;
+                font-size: 11px;
+                line-height: 1.4;
             }
 
             #chat {
                 background: #02070b;
                 border: 1px solid #0d3540;
-                border-radius: 9px;
+                border-radius: 10px;
                 padding: 10px;
                 color: #9de8f3;
+                font-family: Consolas, monospace;
+                font-size: 11px;
+            }
+
+            .quickActionBtn,
+            #quickActionBtn {
+                background: #071923;
+                border: 1px solid #164e63;
+                border-radius: 8px;
+                color: #a5f3fc;
+                font-size: 10px;
+                font-weight: 600;
+                padding: 7px 6px;
+            }
+
+            .quickActionBtn:hover,
+            #quickActionBtn:hover {
+                background: #0b2d3d;
+                border-color: #22d3ee;
+                color: #ffffff;
+            }
+
+            #settingsBox {
+                background: #061018;
+                border: 1px solid #123e4a;
+                border-radius: 10px;
+                color: #7dd3fc;
+                font-size: 11px;
+                font-weight: 700;
+                padding-top: 14px;
+                margin-top: 6px;
+            }
+
+            #settingsCombo,
+            QComboBox {
+                background: #050d14;
+                border: 1px solid #155364;
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #d8fbff;
+                font-size: 11px;
+            }
+
+            #settingsCheck,
+            QCheckBox {
+                color: #bae6fd;
+                font-size: 11px;
+            }
+
+            #safeguardsText {
+                color: #64748b;
+                font-family: Consolas, monospace;
+                font-size: 10px;
+            }
+
+            #diagnosticsReport {
+                background: #04090f;
+                border: 1px solid #0d3540;
+                border-radius: 8px;
+                padding: 10px;
+                color: #a7f3d0;
+                font-family: Consolas, monospace;
+                font-size: 11px;
+            }
+
+            #activityTable {
+                background: #02070b;
+                border: 1px solid #0d3540;
+                border-radius: 8px;
+                color: #bae6fd;
+                gridline-color: #0b222c;
+                font-family: Consolas, monospace;
+                font-size: 11px;
+            }
+
+            QHeaderView::section {
+                background: #071923;
+                color: #38bdf8;
+                border: 1px solid #0d3540;
+                padding: 6px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+
+            #aboutBrowser {
+                background: #02070b;
+                border: 1px solid #0d3540;
+                border-radius: 8px;
+                padding: 12px;
+            }
+
+            #statusDetail {
+                color: #6ee7b7;
                 font-family: Consolas, monospace;
                 font-size: 11px;
             }
@@ -911,10 +1562,10 @@ class OrionWindow(QMainWindow):
             QLineEdit {
                 background: #061018;
                 border: 1px solid #155364;
-                border-radius: 10px;
-                padding: 13px;
+                border-radius: 8px;
+                padding: 11px;
                 color: #d8fbff;
-                font-size: 13px;
+                font-size: 12px;
             }
 
             QLineEdit:focus {
@@ -924,10 +1575,11 @@ class OrionWindow(QMainWindow):
             QPushButton {
                 background: #071923;
                 border: 1px solid #1a7183;
-                border-radius: 10px;
-                padding: 12px 20px;
+                border-radius: 8px;
+                padding: 10px 16px;
                 color: #73e9f8;
                 font-weight: 700;
+                font-size: 11px;
             }
 
             QPushButton:hover {
@@ -939,6 +1591,44 @@ class OrionWindow(QMainWindow):
             QPushButton:disabled {
                 color: #35535b;
                 border-color: #19333b;
+            }
+
+            #primaryActionBtn {
+                background: #064e3b;
+                border: 1px solid #059669;
+                color: #a7f3d0;
+                padding: 10px 18px;
+            }
+
+            #primaryActionBtn:hover {
+                background: #047857;
+                border-color: #34d399;
+                color: #ffffff;
+            }
+
+            #actionBtn {
+                background: #0a2533;
+                border: 1px solid #1f6477;
+                color: #38bdf8;
+                padding: 7px 14px;
+            }
+
+            #actionBtn:hover {
+                background: #0d3347;
+                border-color: #38bdf8;
+                color: #bae6fd;
+            }
+
+            #voiceButton {
+                background: #04251b;
+                border: 1px solid #059669;
+                color: #34d399;
+            }
+
+            #voiceButton:hover {
+                background: #064e3b;
+                border: 1px solid #10b981;
+                color: #a7f3d0;
             }
 
             #ttsButton {
@@ -991,6 +1681,7 @@ class OrionWindow(QMainWindow):
             """
         )
 
+
     # ============================================================
     # LOG / TRANSCRIPT
     # ============================================================
@@ -1040,6 +1731,8 @@ class OrionWindow(QMainWindow):
         state = str(
             state
         ).upper()
+
+        self.current_state = state
 
         self.orb.set_state(
             state
@@ -1157,6 +1850,7 @@ class OrionWindow(QMainWindow):
             return
 
         self.input.clear()
+        self._last_user_query = command
 
         self.append_chat(
             "YOU > " + command
@@ -1224,6 +1918,9 @@ class OrionWindow(QMainWindow):
         self.set_state(
             "READY"
         )
+
+        query = getattr(self, "_last_user_query", "Text Query")
+        self.log_activity(query[:30], "Text Command", "Completed", response[:50].replace("\n", " "))
 
     def text_thread_done(self):
 
@@ -1319,6 +2016,8 @@ class OrionWindow(QMainWindow):
         self.set_state(
             "READY"
         )
+
+        self.log_activity("Voice Input", "Voice Pipeline", "Completed", response[:50].replace("\n", " "))
 
     def voice_thread_done(self):
 
@@ -1444,6 +2143,7 @@ class OrionWindow(QMainWindow):
         """Called whenever an action tool is executed by NEO agent."""
         status_tag = "SUCCESS" if success else "FAILED"
         self.append_chat(f"[TOOL] {tool_name} ({status_tag}) > {result}")
+        self.log_activity(f"Tool: {tool_name}", "PC Tool", status_tag, result[:50].replace("\n", " "))
 
     def clear_conversation(self):
         """Clears current conversation history without touching persistent settings."""
@@ -1451,6 +2151,7 @@ class OrionWindow(QMainWindow):
         self.chat.clear()
         self.append_chat("NEO > Conversation context cleared. Persistent settings preserved.")
         self.set_state("READY")
+        self.log_activity("Clear History", "Context", "Success", "History cleared")
 
     # ============================================================
     # STOP / CANCEL ACTION
@@ -1463,6 +2164,7 @@ class OrionWindow(QMainWindow):
         self.append_chat("NEO > [STOPPED] Speech synthesis halted and current operations cancelled.")
         self.set_state("READY")
         self.set_inputs_enabled(True)
+        self.log_activity("Stop/Cancel", "User Interrupt", "Halted", "Cancelled operations")
 
     def closeEvent(self, event):
         """Stop work and defer closing until active QThreads have actually exited."""

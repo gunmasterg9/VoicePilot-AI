@@ -3,12 +3,16 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.env
+.env*
+!.env.example
 *.log
 .vscode/
 .idea/
 *.backup
+*.bak
 .orion_voice_backup_*/
 data/cache/
 tests/*_scratch.json
 tests/*_settings.json
+backups/
+*.zip

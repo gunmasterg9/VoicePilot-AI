@@ -1,8 +1,9 @@
 """
-NEO AI - LLM Provider Architecture
-Provides provider-based language model integrations supporting:
-1. Local Ollama models (with dynamic discovery, JSON error recovery, and offline resilience)
-2. Optional Cloud LLM providers (OpenAI-compatible)
+NEO AI - LLM Provider Architecture (100% Local & Offline)
+Provides local Ollama language model integration with:
+- Dynamic model discovery & local health checks
+- JSON error recovery & structured action planning
+- Zero cloud/external dependencies
 """
 
 import json
@@ -187,7 +188,8 @@ class OllamaProvider(BaseLLMProvider):
             "model": active_model,
             "messages": messages,
             "stream": False,
-            "format": "json"
+            "format": "json",
+            "think": False
         }
 
         data = json.dumps(payload).encode("utf-8")
@@ -222,104 +224,33 @@ class OllamaProvider(BaseLLMProvider):
             raise OllamaError(f"Invalid model response: {exc}") from exc
 
 
-class CloudLLMProvider(BaseLLMProvider):
-    """Optional OpenAI-compatible cloud provider."""
-
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        base_url: Optional[str] = None
-    ):
-        self._api_key = api_key if api_key is not None else settings.get("cloud_api_key", "")
-        self._base_url = (base_url if base_url is not None else settings.get("cloud_base_url", "https://api.openai.com/v1")).rstrip("/")
-        self._model = model if model is not None else settings.get("cloud_model", "gpt-4o-mini")
-
-    @property
-    def provider_name(self) -> str:
-        return f"Cloud ({self._model})"
-
-    def check_health(self) -> bool:
-        return bool(self._api_key)
-
-    def is_available(self) -> bool:
-        return self.check_health()
-
-    def list_models(self) -> List[str]:
-        return [self._model]
-
-    def ask(self, user_message: str, conversation: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
-        if not self._api_key:
-            raise OllamaError("Cloud provider selected but no API key configured in Settings.")
-
-        max_turns = int(settings.get("max_history_turns", 8))
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        if conversation:
-            messages.extend(conversation[-(max_turns * 2):])
-        messages.append({"role": "user", "content": user_message})
-
-        payload = {
-            "model": self._model,
-            "messages": messages,
-            "response_format": {"type": "json_object"}
-        }
-
-        data = json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self._base_url}/chat/completions",
-            data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self._api_key}"
-            },
-            method="POST"
-        )
-
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read().decode("utf-8")
-            result = json.loads(raw)
-            content = result["choices"][0]["message"]["content"]
-            return _extract_and_parse_json(content)
-        except Exception as exc:
-            raise OllamaError(f"Cloud LLM request failed: {exc}") from exc
-
-
 class LLMManager:
-    """Manages active LLM provider based on application configuration."""
+    """Manages local Ollama LLM provider for 100% offline execution."""
 
     def __init__(self):
         self.ollama_provider = OllamaProvider()
-        self.cloud_provider = CloudLLMProvider()
 
     def get_provider(self) -> BaseLLMProvider:
-        provider_type = settings.get("ai_provider", "ollama").lower()
-        if provider_type == "cloud" and self.cloud_provider.check_health():
-            return self.cloud_provider
         return self.ollama_provider
 
     def get_active_provider(self) -> BaseLLMProvider:
-        return self.get_provider()
+        return self.ollama_provider
 
     def get_active_model(self) -> str:
-        provider = self.get_provider()
-        if isinstance(provider, OllamaProvider):
-            return provider.get_active_model()
-        return getattr(provider, "_model", "Cloud Model")
+        return self.ollama_provider.get_active_model()
 
     def cancel(self):
         """Cancel active in-flight request."""
-        if isinstance(self.ollama_provider, OllamaProvider):
-            self.ollama_provider.cancel()
+        self.ollama_provider.cancel()
 
     def ask(self, user_message: str, conversation: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
-        return self.get_provider().ask(user_message, conversation)
+        return self.ollama_provider.ask(user_message, conversation)
 
     def check_health(self) -> bool:
-        return self.get_provider().check_health()
+        return self.ollama_provider.check_health()
 
     def list_models(self) -> List[str]:
-        return self.get_provider().list_models()
+        return self.ollama_provider.list_models()
 
 
 # Global manager instance

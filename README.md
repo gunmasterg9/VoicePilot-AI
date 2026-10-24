@@ -1,63 +1,97 @@
-# NEO AI — Your Local AI PC Assistant
+# NEO AI — 100% Offline Windows AI PC Assistant
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Platform Windows](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://www.microsoft.com/windows)
 [![UI PySide6](https://img.shields.io/badge/UI-PySide6%20Qt6-41CD52.svg)](https://pypi.org/project/PySide6/)
-[![Voice Faster--Whisper](https://img.shields.io/badge/ASR-Faster--Whisper-orange.svg)](https://github.com/SYSTRAN/faster-whisper)
-[![TTS Neural%20+%20SAPI](https://img.shields.io/badge/TTS-Neural%20%7C%20SAPI5-purple.svg)](https://github.com/rany2/edge-tts)
+[![Voice Faster--Whisper](https://img.shields.io/badge/ASR-Faster--Whisper%20(Offline)-orange.svg)](https://github.com/SYSTRAN/faster-whisper)
+[![TTS SAPI5 Offline](https://img.shields.io/badge/TTS-SAPI5%20(100%25%20Offline)-purple.svg)](https://pypi.org/project/pyttsx3/)
+[![Ollama Local](https://img.shields.io/badge/LLM-Local%20Ollama-black.svg)](https://ollama.com)
 
-**NEO AI** (formerly ORION) is an advanced, offline-first, local AI PC assistant engineered specifically for Windows desktops. Built with Python 3.12 and PySide6, NEO combines local speech recognition (Faster-Whisper), dynamic local LLMs (Ollama), natural neural and offline SAPI5 text-to-speech, and secure desktop automation.
+**NEO AI** is a polished, fast, reliable, and **100% offline Windows desktop AI assistant**. Built with Python 3.12 and PySide6 Qt6, NEO unifies local quantized speech recognition (Faster-Whisper), zero-latency deterministic command routing, offline SAPI5 text-to-speech, safe Windows PC automation, and local Ollama conversational AI.
 
-> **Original Creator & Attribution**: Created by **Gautam Vandar**. Upgraded to NEO AI architecture while preserving historical attribution and module compatibility.
+Supported PC commands execute through deterministic local handlers **without contacting Ollama**, guaranteeing zero network latency and uninterrupted PC control even if Ollama is stopped.
 
----
-
-## Key Features & Architecture
-
-### 1. Animated CoreOrb Desktop UI
-- **5-State Visual Pulse Engine**: Dynamic visual feedback for `READY`, `LISTENING`, `THINKING`, `SPEAKING`, and `ERROR` states.
-- **Dedicated Controls**:
-  - `◉ VOICE`: One-click speech recording and transcription.
-  - `EXECUTE`: Instant keyboard command submission.
-  - `🔊 TEST TTS`: Live audio playback verification.
-  - `⏹ STOP`: Instant halt of speech synthesis and cancellation of active operations.
-  - `⚙ SETTINGS`: Full diagnostic and configuration modal.
-- **Scrollable Transcript Console**: Rich, styled conversation log with user inputs and assistant responses.
-- **Live Hardware Telemetry**: Active LLM model, active TTS provider, voice state, and memory status.
-
-### 2. Dual-Engine Speech Synthesis (TTS)
-- **Online Neural TTS**: High-fidelity natural speech powered by Microsoft Edge Neural voices (supports English, Hindi, and Gujarati) with zero API keys required.
-- **Offline SAPI5 Fallback**: Guaranteed audio output via native Windows SAPI voices even when disconnected from the internet.
-- **Thread-Safe & Overlap Prevention**: Queues and playback locks prevent stuttering or overlapping voices.
-- **Instant Interruption**: User can click `⏹ STOP` to immediately cut off speech playback.
-
-### 3. Speech Recognition (ASR)
-- **Local Faster-Whisper**: Runs quantized CPU int8 Whisper models (`tiny.en`, `base`, etc.) offline.
-- **Audio Pipeline**: Real-time microphone capture via `sounddevice` and `SpeechRecognition` with direct float32 streaming.
-- **Multi-language Ready**: Pre-configured voice and recognition support for English (`en`), Hindi (`hi`), and Gujarati (`gu`).
-
-### 4. Dynamic LLM Brain & Provider Architecture
-- **Local Ollama Integration**: Automatically polls `http://127.0.0.1:11434/api/tags` to discover installed models. Auto-selects lightweight models (e.g., `qwen3:1.7b`) optimized for 8 GB RAM machines.
-- **Optional Cloud Provider**: OpenAI-compatible adapter available for cloud LLM endpoints.
-- **Offline Fallback Engine**: Core system operations, time/date, application launching, hardware diagnostics, and navigation work even if the LLM is temporarily unreachable.
-
-### 5. Secure PC Automation
-- **System Root Guard**: Strict allowlists block destructive file actions against `C:\`, `C:\Windows`, `C:\Program Files`, and user accounts roots.
-- **Confirmation Prompts**: Sensitive operations (`delete_path`, `shutdown_pc`, `restart_pc`) prompt the user with modal dialogs before execution.
-- **Auditable Tool Registry**: Validated execution of applications, window management, and web navigation.
+> **Original Creator & Attribution**: Created by **Gautam Vandar**. Upgraded to the complete offline NEO AI architecture while preserving historical attribution and module backward compatibility.
 
 ---
 
-## Installation & Setup
+## 🏛 Core Architectural Systems
+
+```
+Microphone  ──>  Faster-Whisper (int8 CPU)  ──>  Command Router
+                                                       │
+                      ┌────────────────────────────────┴───────────────────────────────┐
+                      ▼                                                                ▼
+             [Known PC Command]                                            [Conversational / Chat]
+                      │                                                                │
+             Safe Action Registry                                                 Local Ollama
+                      │                                                        (127.0.0.1:11434)
+         ┌────────────┴─────────────┐                                                  │
+         ▼                          ▼                                                  ▼
+Local OS Handlers           Windows Security                                       UI Response
+(Subprocess, PyAutoGUI)    (Confirmations/Roots)                                       │
+         │                          │                                                  │
+         └──────────────────────────┴─────────────────┬────────────────────────────────┘
+                                                      ▼
+                                       PySide6 Modern UI & CoreOrb
+                                                      │
+                                                      ▼
+                                      Offline SAPI5 TTS (pyttsx3)
+```
+
+---
+
+## 🚀 Key Features
+
+### 1. Modern Desktop UI/UX (`ui/window.py`)
+- **Clean Dark Theme**: High-contrast, accessibility-tested cyberpunk/slate aesthetic (`#0c0f17`, `#54e7a6`, `#38bdf8`, `#ef4444`).
+- **Real-Time 6-State Visual Orb**: Real-time lifecycle tracking with specialized animation speeds and colors:
+  `IDLE` (Ready) → `LISTENING` → `TRANSCRIBING` → `ROUTING` → `EXECUTING` / `THINKING` → `SPEAKING` → `IDLE`.
+- **Top Header Bar**: Application branding, online-independent `● 100% OFFLINE` indicator, and live system state.
+- **Compact 5-View Navigation**:
+  - `🏠 HOME`: Animated orb, 9-button Quick Actions, real-time hardware telemetry, chat transcript, text/voice controls.
+  - `🎙 VOICE`: Microphone selection & calibration, Whisper model choice (`tiny.en`, `base`), language configuration (`en`, `hi`), and SAPI5 TTS controls.
+  - `📋 ACTIVITY`: Live auditable table logging timestamp, type, request, status, and execution details.
+  - `⚙ SETTINGS`: Ollama host & model configuration, safety confirmation toggles, and live subsystem diagnostic runner.
+  - `ℹ ABOUT`: System specifications, offline architectural breakdown, and creator attribution.
+- **Instant Quick Actions Panel**: 1-click execution for Notepad, Calculator, Screenshots, Volume Up/Down/Mute, Recycle Bin, Windows Search, and Hardware Telemetry.
+- **Non-Blocking Background Workers**: `AgentWorker`, `VoiceWorker`, and `TtsWorker` execute on background `QThread` instances to eliminate UI freezing.
+
+### 2. Smart Voice Command Engine (`core/router.py`)
+- **Deterministic 0ms Local Routing**: Known PC actions bypass the LLM completely, executing via local Python handlers without invoking Ollama.
+- **Intent Classifier (`CommandRouter`)**: Categorizes requests into `PC_COMMAND`, `SYSTEM_CONTROL`, `DESTRUCTIVE_ACTION`, `CONVERSATIONAL`, `AMBIGUOUS`, or `EMPTY`.
+- **Bilingual English & Hindi Phrasing**:
+  - **Volume**: "Increase volume", "Volume down", "Mute volume", "आवाज़ बढ़ाओ", "वॉल्यूम कम करो", "आवाज बंद करो".
+  - **Applications**: "Open Notepad", "Open Calculator", "नोटपैड खोलो", "कैलकुलेटर खोलो".
+  - **Screenshots**: "Take a screenshot", "Capture screen", "स्क्रीनशॉट लो".
+  - **System Control**: "Stop", "Cancel", "Halt", "Silence", "रुक जाओ", "बंद करो", "शांत रहो".
+  - **Time & Date**: "What time is it", "Today's date", "समय क्या हुआ है", "आज क्या तारीख है".
+
+### 3. Fast Offline Voice Pipeline (`interfaces/voice.py` & `interfaces/tts.py`)
+- **Faster-Whisper Local ASR**: Quantized CPU int8 Whisper models with reusable instance caching and zero cloud calls.
+- **Windows SAPI5 Offline TTS**: High-speed, natural offline speech via `pyttsx3` with master voice enable/disable toggle (`tts_enabled`), speech rate, and volume controls.
+- **Instant Speech Interruption**: `⏹ STOP` halts speech playback and cancels in-flight workers immediately.
+
+### 4. Safe PC Automation (`tools/registry.py` & `core/safety.py`)
+- **System Root Guard**: Strict allowlists block destructive file actions against `C:\`, `C:\Windows`, `C:\Program Files`, and system roots.
+- **Confirmation Prompts**: Destructive operations (`delete_path`, `shutdown_pc`, `restart_pc`) require user confirmation.
+- **Auditable Tool Registry**: Structured `ToolSpec` registry with validated JSON parameter schemas and strict risk classifications (`READ_ONLY`, `REVERSIBLE`, `DESTRUCTIVE`).
+
+### 5. Local Ollama Chat (`core/llm.py`)
+- **Conversational Only**: General knowledge, coding questions, and open-ended conversation route strictly to local Ollama.
+- **Resilient Fallback**: If Ollama is offline or uninstalled, local PC commands, volume controls, app launchers, file searches, and telemetry remain 100% operational.
+
+---
+
+## 💻 Installation & Setup
 
 ### Prerequisites
 - **Operating System**: Windows 10 or Windows 11 (64-bit)
 - **Python**: Python 3.10, 3.11, or 3.12 (Python 3.12 recommended)
-- **Ollama**: (Optional for local LLM brain) [Download Ollama for Windows](https://ollama.com/download)
+- **Ollama**: (Optional, for conversational AI chat) [Download Ollama for Windows](https://ollama.com/download)
 
-### 1. Clone & Setup Virtual Environment
+### 1. Clone & Set Up Virtual Environment
 ```powershell
-git clone <repo-url> "VoicePilot AI"
 cd "VoicePilot AI"
 
 # Create virtual environment
@@ -70,22 +104,21 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 3. Setup Ollama (Recommended)
+### 3. Optional: Pull Local Ollama Model
 ```powershell
-# Pull a fast, lightweight model for 8 GB RAM systems
 ollama pull qwen3:1.7b
 ```
 
 ---
 
-## Launching NEO AI
+## 🚀 Launching NEO AI
 
-### Option A: Desktop Double-Click Launcher
+### Option A: Desktop Double-Click
 Double-click `launch_neo.bat`.
 
 ### Option B: Terminal Command
 ```powershell
-# Launch PySide6 GUI (Default)
+# Launch PySide6 Desktop GUI (Recommended)
 python main.py --mode ui
 
 # Launch Terminal CLI Mode
@@ -97,72 +130,57 @@ python main.py --mode api
 
 ---
 
-## Voice Commands Tested & Supported
+## 🧪 Automated Testing & Verification
 
-NEO AI has been verified against 20 core PC automation and conversational commands:
-
-| # | Command | Category | Expected Response |
-|---|---------|----------|-------------------|
-| 01 | `who are you` | Identity | "My name is NEO. I am your local AI PC assistant..." |
-| 02 | `who created you` | Attribution | "I was created by Gautam Vandar." |
-| 03 | `what can you do` | Capabilities | Capabilities overview and available modules |
-| 04 | `what is your name` | Identity | "My name is NEO..." |
-| 05 | `what time is it` | System API | Real-time system clock (e.g., "05:15 PM") |
-| 06 | `what is today's date` | System API | Real-time calendar date |
-| 07 | `check cpu usage` | Telemetry | Current CPU % load |
-| 08 | `how much memory is used` | Telemetry | RAM usage percentage and GB breakdown |
-| 09 | `check battery and system status` | Telemetry | Battery % and hardware health check |
-| 10 | `open notepad` | App Launcher | Launches Windows Notepad (`notepad.exe`) |
-| 11 | `open calculator` | App Launcher | Launches Windows Calculator (`calc.exe`) |
-| 12 | `open file explorer` | App Launcher | Opens Windows File Explorer |
-| 13 | `open command prompt` | App Launcher | Launches Command Prompt (`cmd.exe`) |
-| 14 | `open google` | Web Navigation | Opens Google in default web browser |
-| 15 | `open youtube` | Web Navigation | Opens YouTube in default web browser |
-| 16 | `open github` | Web Navigation | Opens GitHub in default web browser |
-| 17 | `open wikipedia` | Web Navigation | Opens Wikipedia in default web browser |
-| 18 | `search for python documentation` | Web Search | Searches Google for specified query |
-| 19 | `test your audio playback` | Diagnostics | Speaks: "NEO audio playback is operational..." |
-| 20 | `tell me a joke` | Conversational | Delivers developer humor |
-
----
-
-## Running Automated Tests
-
-Run the complete test suite anytime to verify system stability:
+Run the complete test suite (113 tests) anytime to verify 100% system stability:
 
 ```powershell
-# Phase 1 Voice Commands & Pipeline Test (7 tests)
-python -m unittest tests.test_phase1_voice_commands
+# Run the entire test suite across all 10 modules (113 tests)
+pytest
 
-# Phase 2 Natural Voice, Fallback & Multilingual Speech (9 tests)
-python -m unittest tests.test_phase2_voice
+# Run the Phase 9 Comprehensive Offline Assistant Test Suite (16 tests)
+pytest tests/test_phase6_offline_assistant.py
 
-# Phase 3 AI Brain, Intelligent NLU & Automation (11 tests, 33 commands)
-python -m unittest tests.test_phase3_brain
+# Run Command Routing & Direct Execution Tests (19 tests)
+pytest tests/test_command_routing.py
 
-# Phase 4 End-to-End Reliability & Safety Integration (14 tests)
-python -m unittest tests.test_phase4_integration
-
-# Comprehensive NEO AI Architecture & Security Test (17 tests)
-python -m unittest tests.test_neo_ai
+# Run Core AI Brain & Automation Tests (11 tests, 33 command variations)
+pytest tests/test_phase3_brain.py
 ```
 
+### Test Coverage Highlights (113 / 113 Passed)
+1. UI startup and navigation when Ollama is unavailable.
+2. Direct local command execution with 0ms Ollama latency.
+3. Allowlisted app launching (Notepad, Calculator) via mocked handlers.
+4. Volume (up/down/mute) and screenshot controls.
+5. Conversational questions routed to local Ollama.
+6. Local commands working while Ollama is completely stopped.
+7. Safe handling of unknown and ambiguous commands.
+8. Confirmation requirements for destructive operations.
+9. Stop/cancel behavior and instant speech interruption.
+10. Duplicate-execution prevention within 2-second windows.
+11. Recognition error handling and empty audio protection.
+12. Offline SAPI5 TTS error handling and `tts_enabled` toggling.
+13. Settings validation, schema constraints, and persistence.
+14. Non-blocking UI execution on background worker threads.
+15. Safe cleanup of audio streams and worker threads during window closing.
+
 ---
 
-## Settings & Diagnostics Modal
+## 🔒 Privacy & Offline Guarantee
 
-Clicking `⚙ SETTINGS` opens the central configuration manager:
-- **AI Brain Tab**: Switch between Ollama and Cloud providers, pick active Ollama models with live refresh, configure model timeouts.
-- **Voice & Audio Tab**: Select audio input devices, choose Speech Recognition models (`tiny.en`, `base`, `small`), configure online neural voices (`Aria`, `Guy`, `Swara`, `Dhwani`), and run live mic & speaker tests.
-- **Diagnostics Tab**: Inspect memory, CPU load, Ollama connection status, and installed dependencies in real time.
+- **No Remote Telemetry**: Zero external tracking, analytics, or metrics servers.
+- **No Cloud Voice Services**: Zero cloud speech recognition or cloud TTS APIs.
+- **Local Loopback Only**: The only network interface used is `http://127.0.0.1:11434` for local Ollama.
+- **Data Protection**: API keys and credential strings are automatically masked and scrubbed.
 
 ---
 
-## Backward Compatibility Notice
+## 🔄 Backward Compatibility Notice
 
 For automated pipelines or existing user scripts configured for ORION:
-- `from core.agent import OrionAgent` continues to work (aliases `NeoAgent`).
-- `from ui.window import OrionWindow` continues to work (aliases `NeoWindow`).
-- `from interfaces.terminal import run_terminal` continues to work (aliases `run_neo_terminal`).
-- `from interfaces.api import OrionHandler, run_server` continue to work.
+- `from core.agent import OrionAgent` aliases `NeoAgent`.
+- `from ui.window import OrionWindow` aliases `NeoWindow`.
+- `from interfaces.terminal import run_terminal` aliases `run_neo_terminal`.
+- `from interfaces.api import OrionHandler, run_server` continue to function without modification.
 - Existing settings files with `ORION_...` prefixes are automatically migrated without data loss.

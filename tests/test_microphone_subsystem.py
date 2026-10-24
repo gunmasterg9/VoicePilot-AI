@@ -224,8 +224,38 @@ class TestMicrophoneSubsystem(unittest.TestCase):
 
         result = voice.listen_once()
         self.assertIsNone(result)
-        self.assertTrue(any("No speech detected within 8s" in log for log in self.logs))
+        self.assertTrue(any("No speech detected after two listening attempts" in log for log in self.logs))
         self.assertTrue(any("Speak closer" in log or "Settings" in log for log in self.logs))
+
+    @patch("speech_recognition.Microphone")
+    @patch("interfaces.voice.VoiceInterface.resolve_input_device")
+    def test_listen_once_retries_with_more_sensitive_threshold(self, mock_resolve, mock_mic):
+        """A timeout at the calibrated threshold gets one bounded sensitivity retry."""
+        mock_resolve.return_value = (2, "Realtek Mic", False)
+        mock_mic_ctx = MagicMock()
+        mock_mic.return_value.__enter__.return_value = mock_mic_ctx
+
+        voice = VoiceInterface(
+            agent=self.mock_agent,
+            output_callback=self._output_logger,
+            state_callback=self._state_logger
+        )
+        voice.recognizer.adjust_for_ambient_noise = MagicMock()
+        voice.recognizer.energy_threshold = 600
+        voice.recognizer.listen = MagicMock(
+            side_effect=[sr.WaitTimeoutError("first timeout"), MagicMock(name="captured_audio")]
+        )
+        voice._audio_to_wav = MagicMock(return_value="nonexistent-test-audio.wav")
+        voice._transcribe = MagicMock(return_value="what time is it")
+
+        result = voice.listen_once()
+
+        self.assertEqual(result, "what time is it")
+        self.assertEqual(voice.recognizer.listen.call_count, 2)
+        self.assertTrue(any("increased microphone sensitivity" in log for log in self.logs))
+        self.assertTrue(any("Speech captured on the sensitivity retry" in log for log in self.logs))
+        self.assertEqual(voice.recognizer.energy_threshold, 600)
+        self.assertTrue(voice.recognizer.dynamic_energy_threshold)
 
     @patch("speech_recognition.Microphone")
     @patch("interfaces.voice.VoiceInterface.resolve_input_device")
@@ -243,7 +273,7 @@ class TestMicrophoneSubsystem(unittest.TestCase):
         result = voice.listen_once()
         self.assertIsNone(result)
         self.assertTrue(any("Speech captured, but no discernible words were recognized" in log for log in self.logs))
-        self.assertFalse(any("No speech detected within 8s" in log for log in self.logs))
+        self.assertFalse(any("No speech detected after two listening attempts" in log for log in self.logs))
 
     @patch("speech_recognition.Microphone")
     @patch("interfaces.voice.VoiceInterface.resolve_input_device")

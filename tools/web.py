@@ -101,3 +101,47 @@ def open_website(target):
         )
 
     return False, None
+
+
+def open_new_tab(url: str = "") -> str:
+    """
+    Opens a new tab in the existing browser window if available,
+    otherwise safely falls back to opening the default browser.
+    """
+    browser_signatures = [
+        "Google Chrome", "Chrome",
+        "Microsoft Edge", "Edge",
+        "Mozilla Firefox", "Firefox",
+        "Brave", "Opera", "Vivaldi"
+    ]
+    browser_window = None
+    try:
+        import pygetwindow as gw
+        for win in gw.getAllWindows():
+            title = win.title.strip()
+            if not title:
+                continue
+            if any(sig.lower() in title.lower() for sig in browser_signatures):
+                browser_window = win
+                break
+    except Exception:
+        browser_window = None
+
+    if browser_window:
+        try:
+            browser_window.activate()
+            import pyautogui
+            pyautogui.hotkey("ctrl", "t")
+            if url:
+                pyautogui.typewrite(url + "\n", interval=0.02)
+            return "Opened a new tab in your browser."
+        except Exception:
+            pass
+
+    # Safe, documented fallback: open default browser
+    fallback_url = url if url else "https://www.google.com"
+    try:
+        webbrowser.open_new_tab(fallback_url)
+        return "Opened default web browser."
+    except Exception as exc:
+        return f"Could not open browser: {exc}"

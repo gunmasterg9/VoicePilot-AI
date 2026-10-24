@@ -252,6 +252,7 @@ class OfflineSapiTTSProvider(BaseTTSProvider):
             except Exception:
                 pass
 
+    @property
     def provider_name(self) -> str:
         return "Offline SAPI5 (Windows Local)"
 
@@ -348,7 +349,7 @@ class TTSManager:
         self.offline_provider.set_rate(rate)
 
     def get_active_provider_name(self) -> str:
-        pref = settings.get("tts_provider", "online")
+        pref = settings.get("tts_provider", "offline")
         if pref == "online" and self.online_provider.is_available():
             return self.online_provider.provider_name
         return self.offline_provider.provider_name
@@ -371,12 +372,16 @@ class TTSManager:
         if not text or not text.strip():
             return False
 
+        if not settings.get("tts_enabled", True):
+            return False
+
         with self._lock:
+
             # Stop any ongoing playback before starting new speech
             self.stop()
             self._is_speaking = True
 
-            pref = settings.get("tts_provider", "online").lower()
+            pref = settings.get("tts_provider", "offline").lower()
 
             # 1. Try Online Neural TTS if selected
             if pref == "online" and self.online_provider.is_available():

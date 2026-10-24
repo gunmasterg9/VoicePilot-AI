@@ -5,8 +5,53 @@ language instructions, ensuring instant responsiveness and 100% offline reliabil
 """
 
 import re
-from typing import Any, Dict, Optional
+from enum import Enum
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote_plus
+
+
+class Intent(str, Enum):
+    PC_COMMAND = "pc_command"
+    CONVERSATIONAL = "conversational"
+    SYSTEM_CONTROL = "system_control"
+    DESTRUCTIVE_ACTION = "destructive_action"
+    AMBIGUOUS = "ambiguous"
+    EMPTY = "empty"
+
+
+class CommandRouter:
+    """
+    Dedicated local command router between speech recognition and execution.
+    Decides whether an utterance is a supported PC command, conversational question,
+    system control (stop/cancel), or sensitive/destructive action.
+    """
+    def __init__(self):
+        pass
+
+    def classify_intent(self, utterance: str) -> Tuple[Intent, Dict[str, Any]]:
+        text = _clean(utterance)
+        if not text:
+            return Intent.EMPTY, {}
+
+        plan = route_direct_command(text)
+        if plan:
+            actions = plan.get("actions", [])
+            if actions:
+                tool = actions[0].get("tool", "")
+                args = actions[0].get("arguments", {})
+                if tool in {"stop_speaking", "cancel_speech"}:
+                    return Intent.SYSTEM_CONTROL, {"command": "stop", "plan": plan}
+                if tool in {"shutdown_pc", "restart_pc", "delete_path", "delete_file"}:
+                    return Intent.DESTRUCTIVE_ACTION, {"tool": tool, "args": args, "plan": plan}
+                return Intent.PC_COMMAND, {"tool": tool, "args": args, "plan": plan}
+            if plan.get("type") in {"chat", "query"}:
+                return Intent.PC_COMMAND, {"response": plan.get("response"), "plan": plan}
+            return Intent.SYSTEM_CONTROL, {"plan": plan}
+
+        return Intent.CONVERSATIONAL, {"query": text}
+
+    def route(self, utterance: str) -> Optional[Dict[str, Any]]:
+        return route_direct_command(utterance)
 
 
 def normalize_plan(plan: Any) -> Dict[str, Any]:
@@ -64,12 +109,29 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
 
+    # Strip optional leading wake phrase if followed by a command
+    unwaked = re.sub(
+        r"^(?:(?:hey|hello|hi|okay)\s+)?(?:neo|orion)[\s,:-]+",
+        "",
+        text,
+        flags=re.IGNORECASE
+    ).strip()
+    if unwaked:
+        text = unwaked
+
     lower = text.lower()
 
     # -------------------------------------------------------------
-    # 0. Speech Cancellation
+    # -------------------------------------------------------------
+    # 0. Stop & Speech Cancellation
     # -------------------------------------------------------------
     if lower in {
+        "stop",
+        "cancel",
+        "stop now",
+        "cancel action",
+        "halt",
+        "abort",
         "stop speaking",
         "stop talking",
         "be quiet",
@@ -78,10 +140,13 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         "stop voice",
         "silence",
         "cancel speech",
+        "रुक जाओ",
+        "बंद करो",
+        "शांत रहो",
     }:
         return {
             "type": "action",
-            "response": "Speech synthesis stopped.",
+            "response": "Speech synthesis stopped and operations halted.",
             "actions": [
                 {
                     "tool": "stop_speaking",
@@ -91,12 +156,88 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         }
 
     # -------------------------------------------------------------
-    # 1. Conversation & Identity
+    # 0.5. Volume Controls (Instant Local)
+    # -------------------------------------------------------------
+    if lower in {
+        "increase volume",
+        "volume up",
+        "turn up volume",
+        "turn up the volume",
+        "raise volume",
+        "raise the volume",
+        "increase the volume",
+        "louder",
+        "make it louder",
+        "आवाज़ बढ़ाओ",
+        "वॉल्यूम बढ़ाओ",
+        "आवाज बढ़ाओ",
+    }:
+        return {
+            "type": "action",
+            "response": "Increasing volume.",
+            "actions": [
+                {
+                    "tool": "volume_up",
+                    "arguments": {"steps": 5}
+                }
+            ]
+        }
+
+    if lower in {
+        "decrease volume",
+        "volume down",
+        "turn down volume",
+        "turn down the volume",
+        "lower volume",
+        "lower the volume",
+        "decrease the volume",
+        "quieter",
+        "make it quieter",
+        "आवाज़ कम करो",
+        "वॉल्यूम कम करो",
+        "आवाज कम करो",
+    }:
+        return {
+            "type": "action",
+            "response": "Decreasing volume.",
+            "actions": [
+                {
+                    "tool": "volume_down",
+                    "arguments": {"steps": 5}
+                }
+            ]
+        }
+
+    if lower in {
+        "mute volume",
+        "mute the volume",
+        "mute",
+        "unmute",
+        "unmute volume",
+        "mute sound",
+        "mute audio",
+        "म्यूट करो",
+        "आवाज़ म्यूट करो",
+        "आवाज म्यूट करो",
+    }:
+        return {
+            "type": "action",
+            "response": "Toggling volume mute.",
+            "actions": [
+                {
+                    "tool": "volume_mute",
+                    "arguments": {}
+                }
+            ]
+        }
+
+    # -------------------------------------------------------------
+    # 1. Conversation & Identity (English & Hindi)
     # -------------------------------------------------------------
     greetings = {
         "hi", "hello", "hey", "neo", "hey neo", "okay neo",
         "hey orion", "okay orion", "good morning", "good afternoon",
-        "good evening", "namaste"
+        "good evening", "namaste", "नमस्ते", "नमस्कार"
     }
     if lower in greetings:
         return {
@@ -105,30 +246,83 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
             "actions": []
         }
 
-    if lower in {"how are you", "how are you doing", "what's up", "how's it going"}:
+    if lower in {"how are you", "how are you doing", "what's up", "how's it going", "आप कैसे हैं", "कैसा चल रहा है"}:
         return {
             "type": "chat",
             "response": "I'm online, healthy, and ready for your commands.",
             "actions": []
         }
 
+    if lower in {"who are you", "what is your name", "who made you", "तुम कौन हो", "आप कौन हैं", "तुम्हारा नाम क्या है"}:
+        return {
+            "type": "chat",
+            "response": "I am NEO, your local AI PC assistant.",
+            "actions": []
+        }
+
+    # Hindi Time & Date
+    if lower in {"समय क्या हुआ है", "टाइम क्या है", "समय बताओ", "टाइम बताओ"}:
+        from datetime import datetime
+        now = datetime.now()
+        return {
+            "type": "chat",
+            "response": now.strftime("The current time is %I:%M %p."),
+            "actions": []
+        }
+
+    if lower in {"आज क्या तारीख है", "तारीख क्या है", "आज की तारीख क्या है", "आज कौन सा दिन है"}:
+        from datetime import datetime
+        now = datetime.now()
+        return {
+            "type": "chat",
+            "response": now.strftime("Today is %A, %B %d, %Y."),
+            "actions": []
+        }
+
+    # Hindi App Launching
+    if lower in {"कैलकुलेटर खोलो", "कैलकुलेटर चालू करो"}:
+        return {
+            "type": "action",
+            "response": "Opening Calculator.",
+            "actions": [{"tool": "open_target", "arguments": {"target": "calculator"}}]
+        }
+
+    if lower in {"नोटपैड खोलो", "नोटपैड चालू करो"}:
+        return {
+            "type": "action",
+            "response": "Opening Notepad.",
+            "actions": [{"tool": "open_target", "arguments": {"target": "notepad"}}]
+        }
+
+    if lower in {"पेंट खोलो", "पेंट चालू करो"}:
+        return {
+            "type": "action",
+            "response": "Opening Paint.",
+            "actions": [{"tool": "open_target", "arguments": {"target": "paint"}}]
+        }
+
+    if lower in {"स्क्रीनशॉट लो", "स्क्रीनशॉट खींचो"}:
+        return {
+            "type": "action",
+            "response": "Capturing desktop screenshot.",
+            "actions": [{"tool": "screenshot", "arguments": {}}]
+        }
+
+
     # -------------------------------------------------------------
-    # 2. Hardware Telemetry & RAM Information
+    # 2. Hardware Telemetry & RAM Information (strictly anchored)
     # -------------------------------------------------------------
-    if any(k in lower for k in [
-        "how much ram is available",
-        "how much ram is free",
-        "available ram",
-        "ram available",
-        "tell me how much ram is available",
-        "how much memory is available",
-        "free ram",
-        "check memory",
-        "check ram",
-        "memory used",
-        "ram usage",
-        "how much memory"
-    ]):
+    ram_patterns = [
+        r"^(?:(?:tell me|check|get|what is|show)\s+)?how much (?:ram|memory) is (?:available|free|used)$",
+        r"^(?:tell me\s+)?how much ram is available$",
+        r"^(?:how much\s+)?(?:available|free)\s+ram$",
+        r"^ram\s+available$",
+        r"^check\s+(?:ram|memory)$",
+        r"^(?:ram|memory)\s+(?:usage|used)$",
+        r"^how much memory is used$",
+        r"^how much ram is used$",
+    ]
+    if any(re.match(p, lower) for p in ram_patterns):
         return {
             "type": "action",
             "response": "Inspecting system memory telemetry.",
@@ -140,10 +334,18 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
             ]
         }
 
-    if any(k in lower for k in [
-        "check cpu", "cpu usage", "cpu load", "check battery",
-        "system status", "system health", "hardware status"
-    ]):
+    system_patterns = [
+        r"^(?:check\s+)?cpu(?:\s+(?:usage|load|status|%))?$",
+        r"^(?:check\s+)?battery(?:\s+status|\s+level|\s+and\s+system\s+status)?$",
+        r"^(?:check\s+)?(?:the\s+|my\s+)?system\s+(?:status|health|telemetry)$",
+        r"^(?:check\s+)?hardware\s+status$",
+        r"^(?:show\s+)?(?:the\s+|my\s+)?system\s+information$",
+        r"^(?:show\s+)?(?:the\s+|my\s+)?system\s+info$",
+        r"^show\s+system\s+telemetry$",
+        r"^सिस्टम\s+(?:जानकारी|स्टेटस)(?:\s+दिखाओ)?$",
+    ]
+    if any(re.match(p, lower) for p in system_patterns):
+
         return {
             "type": "action",
             "response": "Gathering system telemetry.",
@@ -212,6 +414,28 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         }
 
     # -------------------------------------------------------------
+    # 4.5. Browser Tab Controls
+    # -------------------------------------------------------------
+    if lower in {
+        "open new tab",
+        "open a new tab",
+        "new tab",
+        "open tab",
+        "create new tab",
+        "create a new tab",
+    }:
+        return {
+            "type": "action",
+            "response": "Opening a new browser tab.",
+            "actions": [
+                {
+                    "tool": "open_new_tab",
+                    "arguments": {}
+                }
+            ]
+        }
+
+    # -------------------------------------------------------------
     # 5. Browser Launching
     # -------------------------------------------------------------
     if lower in {
@@ -266,6 +490,28 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         }
 
     # -------------------------------------------------------------
+    # 7.5. Local Computer Search
+    # -------------------------------------------------------------
+    local_search_patterns = [
+        r"^(?:search|find)\s+(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)$",
+        r"^(?:search|find)\s+files\s+(?:on\s+)?(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)$",
+        r"^(?:search|find)\s+(?:for\s+)?files\s+on\s+(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)$",
+        r"^(?:search|find)\s+(?:my\s+|the\s+)?(?:pc|computer)\s+for\s+files$",
+        r"^(?:open\s+)?windows\s+search$",
+    ]
+    if any(re.match(p, lower) for p in local_search_patterns):
+        return {
+            "type": "action",
+            "response": "Opening Windows Search.",
+            "actions": [
+                {
+                    "tool": "open_windows_search",
+                    "arguments": {"query": ""}
+                }
+            ]
+        }
+
+    # -------------------------------------------------------------
     # 8. Web Search (Google, YouTube)
     # -------------------------------------------------------------
     match_yt = re.match(
@@ -286,24 +532,61 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
             ]
         }
 
+    match_explicit_web = re.match(
+        r"^(?:search\s+(?:google|the\s+web|the\s+internet|web|online)\s+(?:for\s+)?|google\s+)(.+)$",
+        text,
+        re.IGNORECASE
+    )
+    if match_explicit_web:
+        query = _clean(match_explicit_web.group(1))
+        return {
+            "type": "action",
+            "response": f"Searching the web for {query}.",
+            "actions": [
+                {
+                    "tool": "search_web",
+                    "arguments": {"query": query}
+                }
+            ]
+        }
+
+    match_web_on = re.match(
+        r"^(?:search|look\s+up|find)\s+(?:for\s+)?(.+?)\s+on\s+(?:google|the\s+web|web)$",
+        text,
+        re.IGNORECASE
+    )
+    if match_web_on:
+        query = _clean(match_web_on.group(1))
+        return {
+            "type": "action",
+            "response": f"Searching the web for {query}.",
+            "actions": [
+                {
+                    "tool": "search_web",
+                    "arguments": {"query": query}
+                }
+            ]
+        }
+
     match_web = re.match(
-        r"^(?:search(?:\s+the\s+web|\s+the\s+internet|\s+google)?|look\s+up|google)\s+(?:for\s+)?(.+?)(?:\s+on\s+(?:google|the\s+web|web))?$",
+        r"^(?:search|look\s+up)\s+(?:for\s+)?(.+)$",
         text,
         re.IGNORECASE
     )
     if match_web:
         query = _clean(match_web.group(1))
         if query and not query.startswith("folder") and not query.startswith("directory"):
-            return {
-                "type": "action",
-                "response": f"Searching the web for {query}.",
-                "actions": [
-                    {
-                        "tool": "search_web",
-                        "arguments": {"query": query}
-                    }
-                ]
-            }
+            if not re.search(r"\b(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)\b", query, re.IGNORECASE):
+                return {
+                    "type": "action",
+                    "response": f"Searching the web for {query}.",
+                    "actions": [
+                        {
+                            "tool": "search_web",
+                            "arguments": {"query": query}
+                        }
+                    ]
+                }
 
     # -------------------------------------------------------------
     # 9. Generic Open / Launch Application or Website

@@ -63,9 +63,6 @@ def _search_start_menu(target):
 
         score = 0
 
-        if target in name:
-            score += 4
-
         target_words = set(
             target.split()
         )
@@ -74,9 +71,12 @@ def _search_start_menu(target):
             name.split()
         )
 
-        score += len(
-            target_words & name_words
-        )
+        if target in name:
+            score += 4
+        elif target_words and target_words.issubset(name_words):
+            score += 3
+        elif len(target_words) > 1 and len(target_words & name_words) >= 2:
+            score += 1
 
         if score > best_score:
 

@@ -106,6 +106,12 @@ KNOWN_APPLICATIONS = {
     "vs code": ["code"],
     "visual studio code": ["code"],
     "code": ["code"],
+
+    "recycle bin": ["explorer.exe", "shell:RecycleBinFolder"],
+    "recyclebin": ["explorer.exe", "shell:RecycleBinFolder"],
+    "the recycle bin": ["explorer.exe", "shell:RecycleBinFolder"],
+    "trash": ["explorer.exe", "shell:RecycleBinFolder"],
+    "the trash": ["explorer.exe", "shell:RecycleBinFolder"],
 }
 
 
@@ -748,6 +754,15 @@ class OrionAgent:
             " .!?,"
         )
 
+        # Remove a leading NEO wake phrase before matching direct commands.
+        clean = re.sub(
+            r"^(?:(?:hey|hello|hi|okay)\s+)?(?:neo|orion)[\s,:-]+",
+            "",
+            clean,
+            flags=re.IGNORECASE
+        ).strip()
+        lower = clean
+
 
         # ====================================================
         # DATE
@@ -1117,22 +1132,28 @@ class OrionAgent:
 
 
         # ====================================================
-        # OPEN WEBSITE / APPLICATION
+        # OPEN WEBSITE / APPLICATION / TABS
         # ====================================================
 
+        if clean in {
+            "open new tab",
+            "open a new tab",
+            "new tab",
+            "open tab",
+            "create new tab",
+            "create a new tab",
+        }:
+            from tools.web import open_new_tab
+            return open_new_tab()
+
         match = re.match(
-
             r"^(?:open|launch|go\s+to)\s+(.+?)$",
-
             lower,
-
             re.IGNORECASE
         )
 
         if match:
-
             target = match.group(1).strip()
-
             return self._open_target(
                 target
             )
@@ -1429,18 +1450,59 @@ class OrionAgent:
 
 
         # ====================================================
+        # LOCAL COMPUTER SEARCH
+        # ====================================================
+        local_search_patterns = [
+            r"^(?:search|find)\s+(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)$",
+            r"^(?:search|find)\s+files\s+(?:on\s+)?(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)$",
+            r"^(?:search|find)\s+(?:for\s+)?files\s+on\s+(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)$",
+            r"^(?:search|find)\s+(?:my\s+|the\s+)?(?:pc|computer)\s+for\s+files$",
+            r"^(?:open\s+)?windows\s+search$",
+        ]
+        if any(re.match(p, clean, re.IGNORECASE) for p in local_search_patterns):
+            from tools.windows import open_windows_search
+            return open_windows_search()
+
+        # ====================================================
         # WEB SEARCH
         # ====================================================
 
-        match = re.match(
-            r"^(?:search|google|search\s+for|look\s+up)\s+(.+)$",
-            lower,
+        match_explicit_web = re.match(
+            r"^(?:search\s+(?:google|the\s+web|the\s+internet|web|online)\s+(?:for\s+)?|google\s+)(.+)$",
+            clean,
             re.IGNORECASE
         )
+        if match_explicit_web:
+            query = match_explicit_web.group(1).strip()
+            try:
+                url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
+                webbrowser.open(url, new=2)
+                return f"Searching Google for {query}."
+            except Exception as exc:
+                return f"Could not perform search: {exc}"
 
-        if match:
-            query = match.group(1).strip()
-            if not query.lower().endswith("youtube"):
+        match_web_on = re.match(
+            r"^(?:search|look\s+up|find)\s+(?:for\s+)?(.+?)\s+on\s+(?:google|the\s+web|web)$",
+            clean,
+            re.IGNORECASE
+        )
+        if match_web_on:
+            query = match_web_on.group(1).strip()
+            try:
+                url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
+                webbrowser.open(url, new=2)
+                return f"Searching Google for {query}."
+            except Exception as exc:
+                return f"Could not perform search: {exc}"
+
+        match_generic = re.match(
+            r"^(?:search\s+for|search|look\s+up)\s+(.+)$",
+            clean,
+            re.IGNORECASE
+        )
+        if match_generic:
+            query = match_generic.group(1).strip()
+            if not query.lower().endswith("youtube") and not re.search(r"\b(?:my\s+|this\s+|the\s+)?(?:pc|computer|laptop)\b", query, re.IGNORECASE):
                 try:
                     url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
                     webbrowser.open(url, new=2)
@@ -1449,10 +1511,11 @@ class OrionAgent:
                     return f"Could not perform search: {exc}"
 
         # ====================================================
-        # HARDWARE TELEMETRY & SYSTEM HEALTH
+        # HARDWARE TELEMETRY & SYSTEM HEALTH (ANCHORED)
         # ====================================================
 
-        if any(k in clean for k in ["cpu usage", "cpu %", "check cpu"]):
+        # CPU Telemetry
+        if re.match(r"^(?:(?:check|get|what is|tell me|show)\s+(?:the\s+|my\s+)?)?cpu(?:\s+(?:usage|load|status|%))?$", clean, re.IGNORECASE) or clean in {"check cpu", "cpu usage", "cpu %", "cpu load"}:
             try:
                 import psutil
                 cpu = psutil.cpu_percent(interval=0.1)
@@ -1460,7 +1523,18 @@ class OrionAgent:
             except Exception as exc:
                 return f"Could not read CPU: {exc}"
 
-        if any(k in clean for k in ["memory used", "memory usage", "ram used", "ram usage", "check memory", "check ram", "how much memory"]):
+        # RAM / Memory Telemetry
+        ram_patterns = [
+            r"^(?:(?:tell me|check|get|what is|show)\s+)?how much (?:ram|memory) is (?:available|free|used)$",
+            r"^(?:tell me\s+)?how much ram is available$",
+            r"^(?:how much\s+)?(?:available|free)\s+ram$",
+            r"^ram\s+available$",
+            r"^check\s+(?:ram|memory)$",
+            r"^(?:ram|memory)\s+(?:usage|used)$",
+            r"^how much memory is used$",
+            r"^how much ram is used$",
+        ]
+        if any(re.match(p, clean, re.IGNORECASE) for p in ram_patterns):
             try:
                 import psutil
                 mem = psutil.virtual_memory()
@@ -1470,7 +1544,14 @@ class OrionAgent:
             except Exception as exc:
                 return f"Could not read memory: {exc}"
 
-        if any(k in clean for k in ["battery", "system status", "system health", "check battery"]):
+        # Battery & System Telemetry
+        system_patterns = [
+            r"^(?:check\s+)?battery\s+and\s+system\s+status$",
+            r"^(?:check\s+)?(?:the\s+|my\s+)?battery(?:\s+status|\s+level|\s+health)?$",
+            r"^(?:check\s+)?(?:the\s+|my\s+)?system\s+(?:status|health|telemetry)$",
+            r"^(?:check\s+)?hardware\s+status$",
+        ]
+        if any(re.match(p, clean, re.IGNORECASE) for p in system_patterns):
             try:
                 import psutil
                 batt = psutil.sensors_battery()
@@ -1480,6 +1561,44 @@ class OrionAgent:
                 return f"System telemetry: {batt_str} CPU is at {cpu}%, RAM is at {mem}%."
             except Exception:
                 return "System telemetry: All core hardware systems operational."
+
+        # ====================================================
+        # STOP / CANCEL
+        # ====================================================
+        if clean in {
+            "stop", "cancel", "stop now", "cancel action", "halt", "abort",
+            "stop speaking", "stop talking", "be quiet", "shut up",
+            "stop audio", "stop voice", "silence", "cancel speech",
+            "रुक जाओ", "बंद करो", "शांत रहो"
+        }:
+            self.cancel_current_operation()
+            return "Speech synthesis stopped and operations halted."
+
+        # ====================================================
+        # VOLUME CONTROLS
+        # ====================================================
+        if clean in {
+            "increase volume", "volume up", "turn up volume", "turn up the volume",
+            "raise volume", "raise the volume", "increase the volume", "louder", "make it louder",
+            "आवाज़ बढ़ाओ", "वॉल्यूम बढ़ाओ", "आवाज बढ़ाओ"
+        }:
+            from tools.system import volume_up
+            return volume_up(5)
+
+        if clean in {
+            "decrease volume", "volume down", "turn down volume", "turn down the volume",
+            "lower volume", "lower the volume", "decrease the volume", "quieter", "make it quieter",
+            "आवाज़ कम करो", "वॉल्यूम कम करो", "आवाज कम करो"
+        }:
+            from tools.system import volume_down
+            return volume_down(5)
+
+        if clean in {
+            "mute volume", "mute the volume", "mute", "unmute", "unmute volume",
+            "mute sound", "mute audio", "म्यूट करो", "आवाज़ म्यूट करो", "आवाज म्यूट करो"
+        }:
+            from tools.system import volume_mute
+            return volume_mute()
 
         # ====================================================
         # AUDIO & JOKES
@@ -1502,6 +1621,7 @@ class OrionAgent:
         # ====================================================
 
         return None
+
 
 
 
@@ -1626,8 +1746,12 @@ class OrionAgent:
         except Exception as exc:
             return f"NEO error: {exc}"
 
+    # Modern alias for text processing
+    process_text = run
+
 
 # Backward-compatible and modern alias
 NeoAgent = OrionAgent
+
 
 

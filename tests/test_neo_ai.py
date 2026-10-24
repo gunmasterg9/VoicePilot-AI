@@ -63,8 +63,10 @@ class TestSettingsManager(unittest.TestCase):
 
     def test_default_settings(self):
         self.assertEqual(self.mgr.get("ai_provider"), "ollama")
-        self.assertEqual(self.mgr.get("tts_provider"), "online")
+        self.assertEqual(self.mgr.get("tts_provider"), "offline")
         self.assertEqual(self.mgr.get("speech_language"), "en")
+        # Obsolete cloud keys must safely return empty string without errors
+        self.assertEqual(self.mgr.get("cloud_api_key"), "")
 
     def test_update_and_save(self):
         self.mgr.set("ollama_model", "qwen3:8b")
@@ -113,12 +115,13 @@ class TestLLMProviders(unittest.TestCase):
         else:
             print("\n  [SKIP] Ollama daemon not running during unit test, fallback handled safely.")
 
-    def test_cloud_provider_fallback_when_unconfigured(self):
-        from core.llm import CloudLLMProvider, OllamaError
-        cloud = CloudLLMProvider(api_key="", model="gpt-4o-mini")
-        self.assertFalse(cloud.is_available())
-        with self.assertRaises(OllamaError):
-            cloud.ask("Hello")
+    def test_offline_pure_local_provider_enforcement(self):
+        """Verifies that Cloud LLM providers are removed and provider is exclusively local Ollama."""
+        from core.llm import llm_manager, OllamaProvider
+        provider = llm_manager.get_active_provider()
+        self.assertIsInstance(provider, OllamaProvider)
+        import core.llm as llm_mod
+        self.assertFalse(hasattr(llm_mod, "CloudLLMProvider"), "CloudLLMProvider must be completely removed")
 
 
 class TestVoiceAndTTSPipeline(unittest.TestCase):

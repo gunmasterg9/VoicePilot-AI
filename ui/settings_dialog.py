@@ -137,7 +137,7 @@ class SettingsDialog(QDialog):
         form_provider = QFormLayout(group_provider)
 
         self.combo_ai_provider = QComboBox()
-        self.combo_ai_provider.addItems(["ollama", "cloud"])
+        self.combo_ai_provider.addItems(["ollama (Local)"])
         form_provider.addRow("Provider:", self.combo_ai_provider)
 
         # Context History Limit
@@ -172,22 +172,14 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(group_ollama)
 
-        # Cloud LLM Group
-        group_cloud = QGroupBox("Optional Cloud LLM (OpenAI-Compatible)")
-        form_cloud = QFormLayout(group_cloud)
-
-        self.input_cloud_url = QLineEdit()
-        form_cloud.addRow("API Base URL:", self.input_cloud_url)
-
-        self.input_cloud_key = QLineEdit()
-        self.input_cloud_key.setEchoMode(QLineEdit.Password)
-        self.input_cloud_key.setPlaceholderText("sk-...")
-        form_cloud.addRow("API Key:", self.input_cloud_key)
-
-        self.input_cloud_model = QLineEdit()
-        form_cloud.addRow("Model Name:", self.input_cloud_model)
-
-        layout.addWidget(group_cloud)
+        # Offline Local Engine Notice
+        group_offline = QGroupBox("Privacy & Local Architecture")
+        form_offline = QFormLayout(group_offline)
+        lbl_offline = QLabel("🔒 100% Offline: Reasoning and automation run entirely on your local machine via Ollama. No external cloud endpoints or API keys are required.")
+        lbl_offline.setWordWrap(True)
+        lbl_offline.setStyleSheet("color: #94a3b8; font-size: 11px; padding: 4px;")
+        form_offline.addRow(lbl_offline)
+        layout.addWidget(group_offline)
         layout.addStretch()
 
         self.tabs.addTab(tab, "🧠 AI Brain")
@@ -233,8 +225,8 @@ class SettingsDialog(QDialog):
         form_tts = QFormLayout(group_tts)
 
         self.combo_tts_mode = QComboBox()
+        self.combo_tts_mode.addItem("Offline SAPI5 (pyttsx3) [Default]", "offline")
         self.combo_tts_mode.addItem("Online Neural (edge-tts)", "online")
-        self.combo_tts_mode.addItem("Offline SAPI5 (pyttsx3)", "offline")
         form_tts.addRow("Primary Mode:", self.combo_tts_mode)
 
         self.combo_online_voice = QComboBox()
@@ -333,10 +325,6 @@ class SettingsDialog(QDialog):
         max_turns = int(settings.get("max_history_turns", 8))
         self.slider_max_turns.setValue(max_turns)
         self.lbl_max_turns.setText(f"{max_turns} turns")
-
-        self.input_cloud_url.setText(settings.get("cloud_base_url", "https://api.openai.com/v1"))
-        self.input_cloud_key.setText(settings.get("cloud_api_key", ""))
-        self.input_cloud_model.setText(settings.get("cloud_model", "gpt-4o-mini"))
 
         # Voice & Language
         whisper_m = settings.get("whisper_model", "tiny.en")
@@ -609,9 +597,6 @@ Security & Control:
             settings.set("ollama_model", ollama_m)
             llm_manager.ollama_provider.set_model(ollama_m)
 
-        settings.set("cloud_base_url", self.input_cloud_url.text().strip())
-        settings.set("cloud_api_key", self.input_cloud_key.text().strip())
-        settings.set("cloud_model", self.input_cloud_model.text().strip())
         settings.set("max_history_turns", self.slider_max_turns.value())
 
         settings.set("whisper_model", self.combo_whisper_model.currentText())

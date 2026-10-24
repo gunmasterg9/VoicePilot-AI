@@ -94,3 +94,20 @@ def close_window(title):
     return (
         f"Closed {window.title}"
     )
+
+
+def open_windows_search(query: str = "") -> str:
+    """Opens Windows Search or File Explorer search."""
+    import subprocess
+    import urllib.parse
+    try:
+        if query:
+            target = f"search-ms:query={urllib.parse.quote_plus(query)}"
+        else:
+            target = "search-ms:"
+        subprocess.Popen(["explorer.exe", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if query:
+            return f"Opening Windows Search for {query}."
+        return "Opening Windows Search."
+    except Exception as exc:
+        return f"Could not open Windows Search: {exc}"

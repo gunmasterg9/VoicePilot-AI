@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from tools.base import ToolPermission, ToolResult, ToolSpec
 from tools.apps import find_application, launch_application
-from tools.web import open_website, search_web
+from tools.web import open_website, search_web, open_new_tab
 from tools.computer import (
     move_mouse,
     click,
@@ -37,6 +37,7 @@ from tools.windows import (
     minimize_window,
     maximize_window,
     close_window,
+    open_windows_search,
 )
 from tools.system import (
     lock_pc,
@@ -45,6 +46,10 @@ from tools.system import (
     cancel_shutdown,
     get_ram_info,
     get_system_telemetry,
+    volume_up,
+    volume_down,
+    volume_mute,
+    get_system_info,
 )
 from tools.orion_direct import (
     close_target,
@@ -105,6 +110,27 @@ def open_target(target: str, force_web: bool = False) -> str:
     }:
         open_url("https://www.google.com")
         return "Opened default web browser."
+
+    # Recycle Bin (open actual Windows Recycle Bin)
+    if normalized in {"recycle bin", "recyclebin", "trash", "the recycle bin", "trash can"}:
+        import subprocess
+        try:
+            subprocess.Popen(
+                ["explorer.exe", "shell:RecycleBinFolder"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            return "Opening Recycle Bin."
+        except Exception as exc:
+            return f"Could not open Recycle Bin: {exc}"
+
+    # Browser new tab
+    if normalized in {"new tab", "a new tab", "browser tab", "tab"}:
+        return open_new_tab()
+
+    # Windows Search / Local Search
+    if normalized in {"windows search", "search my pc", "search pc"}:
+        return open_windows_search()
 
     # Special user folders
     if normalized in {
@@ -174,6 +200,8 @@ TOOLS: Dict[str, Callable] = {
     "minimize_window": minimize_window,
     "maximize_window": maximize_window,
     "close_window": close_window,
+    "open_windows_search": open_windows_search,
+    "open_new_tab": open_new_tab,
 
     # GUI and Input Automation
     "move_mouse": move_mouse,
@@ -202,7 +230,14 @@ TOOLS: Dict[str, Callable] = {
     "shutdown_pc": shutdown_pc,
     "restart_pc": restart_pc,
     "cancel_shutdown": cancel_shutdown,
+
+    # Audio Volume and System Info
+    "volume_up": volume_up,
+    "volume_down": volume_down,
+    "volume_mute": volume_mute,
+    "get_system_info": get_system_info,
 }
+
 
 
 # Structured Tool Specifications with schemas and permission levels
@@ -422,7 +457,50 @@ TOOL_SPECS: Dict[str, ToolSpec] = {
         parameters={"type": "object", "properties": {}},
         permission=ToolPermission.REVERSIBLE,
     ),
+    "open_new_tab": ToolSpec(
+        name="open_new_tab",
+        description="Opens a new tab in the active or default browser.",
+        function=open_new_tab,
+        parameters={"type": "object", "properties": {"url": {"type": "string"}}},
+        permission=ToolPermission.REVERSIBLE,
+    ),
+    "open_windows_search": ToolSpec(
+        name="open_windows_search",
+        description="Opens Windows Search or searches local files.",
+        function=open_windows_search,
+        parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+        permission=ToolPermission.REVERSIBLE,
+    ),
+    "volume_up": ToolSpec(
+        name="volume_up",
+        description="Increases Windows system audio volume.",
+        function=volume_up,
+        parameters={"type": "object", "properties": {"steps": {"type": "integer"}}},
+        permission=ToolPermission.REVERSIBLE,
+    ),
+    "volume_down": ToolSpec(
+        name="volume_down",
+        description="Decreases Windows system audio volume.",
+        function=volume_down,
+        parameters={"type": "object", "properties": {"steps": {"type": "integer"}}},
+        permission=ToolPermission.REVERSIBLE,
+    ),
+    "volume_mute": ToolSpec(
+        name="volume_mute",
+        description="Toggles Windows system audio mute state.",
+        function=volume_mute,
+        parameters={"type": "object", "properties": {}},
+        permission=ToolPermission.REVERSIBLE,
+    ),
+    "get_system_info": ToolSpec(
+        name="get_system_info",
+        description="Returns CPU, RAM, battery, and disk telemetry.",
+        function=get_system_info,
+        parameters={"type": "object", "properties": {}},
+        permission=ToolPermission.READ_ONLY,
+    ),
 }
+
 
 
 def get_tool(name: str) -> Optional[Callable]:

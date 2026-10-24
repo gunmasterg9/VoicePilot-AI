@@ -101,22 +101,36 @@ class TestAudioOutputRoutingAndControls(unittest.TestCase):
 
 
 class TestOnlineToOfflineTTSFallback(unittest.TestCase):
-    """Verifies automatic offline fallback when online synthesis encounters failure."""
+    """Verifies default offline operation and fallback when online synthesis encounters failure."""
+
+    def test_default_offline_provider_selection(self):
+        """Verifies that default TTS operates purely offline without calling online provider."""
+        from interfaces.tts import TTSManager
+        from core.settings import settings
+        mgr = TTSManager()
+        self.assertEqual(mgr.get_active_provider_name(), mgr.offline_provider.provider_name)
+        self.assertEqual(settings.get("tts_provider"), "offline")
 
     def test_fallback_to_sapi_on_network_failure(self):
         from interfaces.tts import TTSManager
-        
-        log_messages = []
-        mgr = TTSManager(log_callback=lambda msg: log_messages.append(msg))
-        
-        # Simulate online provider failure by pointing to an invalid dummy voice that errors
-        mgr.online_provider._voice = "invalid-voice"
-        
-        # speak() should catch the error and cleanly switch to offline SAPI5 provider
-        result = mgr.speak("Testing offline SAPI fallback.")
-        self.assertTrue(result, "Offline fallback should succeed when online provider fails")
-        self.assertEqual(mgr._current_provider_name, mgr.offline_provider.provider_name)
-        self.assertTrue(any("FALLBACK" in msg for msg in log_messages))
+        from core.settings import settings
+
+        orig_pref = settings.get("tts_provider")
+        settings.set("tts_provider", "online", save=False)
+        try:
+            log_messages = []
+            mgr = TTSManager(log_callback=lambda msg: log_messages.append(msg))
+
+            # Simulate online provider failure by pointing to an invalid dummy voice that errors
+            mgr.online_provider._voice = "invalid-voice"
+
+            # speak() should catch the error and cleanly switch to offline SAPI5 provider
+            result = mgr.speak("Testing offline SAPI fallback.")
+            self.assertTrue(result, "Offline fallback should succeed when online provider fails")
+            self.assertEqual(mgr._current_provider_name, mgr.offline_provider.provider_name)
+            self.assertTrue(any("FALLBACK" in msg for msg in log_messages))
+        finally:
+            settings.set("tts_provider", orig_pref, save=False)
 
 
 class TestMultilingualWhisperModelSelection(unittest.TestCase):
