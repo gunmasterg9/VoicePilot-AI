@@ -19,6 +19,80 @@ class Intent(str, Enum):
     EMPTY = "empty"
 
 
+def is_ambiguous_fragment(text: str) -> bool:
+    """
+    Detects whether an utterance is an ambiguous fragment or noise (e.g. 'ndo', 'kaakwar')
+    rather than a clear conversational question, greeting, or executable command.
+    """
+    clean = _clean(text).strip()
+    if not clean:
+        return True
+
+    lower = clean.lower()
+    words = lower.split()
+
+    # If it matches any direct command or router rule, it's valid
+    if route_direct_command(clean) is not None:
+        return False
+
+    # Allowed single-word conversational terms
+    allowed_single_words = {
+        "hi", "hello", "hey", "namaste", "thanks", "thank you", "bye", "goodbye",
+        "yes", "no", "ok", "okay", "sure", "help",
+        "नमस्ते", "नमस्कार", "धन्यवाद", "अलविदा", "हाँ", "नहीं", "मदद",
+        "નમસ્તે", "આભાર", "હા", "ના", "મદદ"
+    }
+    if lower in allowed_single_words:
+        return False
+
+    # Short fragments (<= 3 characters that aren't allowed words)
+    if len(clean) <= 3:
+        return True
+
+    # Known application & website names
+    known_targets = {
+        "notepad", "calculator", "paint", "explorer", "cmd", "powershell",
+        "task manager", "chrome", "edge", "vs code", "code", "recycle bin",
+        "youtube", "google", "github", "chatgpt", "spotify", "instagram",
+        "facebook", "whatsapp", "linkedin", "amazon", "flipkart", "reddit",
+        "twitter", "wikipedia", "canva", "zoom", "outlook"
+    }
+
+    # Single-word utterances
+    if len(words) == 1:
+        if lower in known_targets:
+            return False
+        question_words = {"who", "what", "where", "when", "why", "how", "which"}
+        if lower in question_words or clean.endswith("?"):
+            return False
+
+        # Check latin character ratio / vowel absence
+        latin_chars = [c for c in lower if 'a' <= c <= 'z']
+        if latin_chars:
+            vowels = sum(1 for c in latin_chars if c in "aeiouy")
+            if vowels == 0 and len(latin_chars) >= 2:
+                return True
+
+        # Standalone unrecognized words without context or question mark are ambiguous
+        return True
+
+    # Two-word utterances
+    if len(words) == 2:
+        question_starters = {"what", "who", "where", "when", "why", "how", "can", "is", "are", "tell", "explain"}
+        if words[0] in question_starters or clean.endswith("?"):
+            return False
+        greetings = {"good morning", "good evening", "good afternoon", "thank you", "how are"}
+        if lower in greetings:
+            return False
+        # If any word has no vowels in Latin script
+        for w in words:
+            latin = [c for c in w if 'a' <= c <= 'z']
+            if len(latin) >= 2 and sum(1 for c in latin if c in "aeiouy") == 0:
+                return True
+
+    return False
+
+
 class CommandRouter:
     """
     Dedicated local command router between speech recognition and execution.
@@ -47,6 +121,10 @@ class CommandRouter:
             if plan.get("type") in {"chat", "query"}:
                 return Intent.PC_COMMAND, {"response": plan.get("response"), "plan": plan}
             return Intent.SYSTEM_CONTROL, {"plan": plan}
+
+        # Check for ambiguous or garbled noise fragments before conversational routing
+        if is_ambiguous_fragment(text):
+            return Intent.AMBIGUOUS, {"query": text, "reason": "fragment"}
 
         return Intent.CONVERSATIONAL, {"query": text}
 
@@ -143,6 +221,8 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         "रुक जाओ",
         "बंद करो",
         "शांत रहो",
+        "શાંત રહો",
+        "રોકાઈ જાઓ",
     }:
         return {
             "type": "action",
@@ -171,6 +251,7 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         "आवाज़ बढ़ाओ",
         "वॉल्यूम बढ़ाओ",
         "आवाज बढ़ाओ",
+        "અવાજ વધારો",
     }:
         return {
             "type": "action",
@@ -196,6 +277,7 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         "आवाज़ कम करो",
         "वॉल्यूम कम करो",
         "आवाज कम करो",
+        "અવાજ ઘટાડો",
     }:
         return {
             "type": "action",
@@ -219,6 +301,7 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
         "म्यूट करो",
         "आवाज़ म्यूट करो",
         "आवाज म्यूट करो",
+        "અવાજ બંધ કરો",
     }:
         return {
             "type": "action",
@@ -237,7 +320,7 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
     greetings = {
         "hi", "hello", "hey", "neo", "hey neo", "okay neo",
         "hey orion", "okay orion", "good morning", "good afternoon",
-        "good evening", "namaste", "नमस्ते", "नमस्कार"
+        "good evening", "namaste", "नमस्ते", "नमस्कार", "નમસ્તે", "કેમ છો"
     }
     if lower in greetings:
         return {
@@ -253,10 +336,51 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
             "actions": []
         }
 
-    if lower in {"who are you", "what is your name", "who made you", "तुम कौन हो", "आप कौन हैं", "तुम्हारा नाम क्या है"}:
+    if lower in {"who are you", "what is your name", "who made you", "तुम कौन हो", "आप कौन हैं", "तुम्हारा नाम क्या है", "તમે કોણ છો"}:
         return {
             "type": "chat",
             "response": "I am NEO, your local AI PC assistant.",
+            "actions": []
+        }
+
+    # English & Hindi Time & Date
+    time_patterns = [
+        r"^what time is it$",
+        r"^what'?s the time$",
+        r"^what is the time$",
+        r"^what is current time$",
+        r"^what is the current time$",
+        r"^tell me the time$",
+        r"^current time$",
+        r"^time now$",
+        r"^what time is it now$",
+        r"^what is the time now$"
+    ]
+    if any(re.match(p, lower) for p in time_patterns) or lower in {"समय क्या हुआ है", "टाइम क्या है", "समय बताओ", "टाइम बताओ", "સમય શું થયો છે", "ટાઈમ શું છે"}:
+        from datetime import datetime
+        now = datetime.now()
+        return {
+            "type": "chat",
+            "response": now.strftime("The current time is %I:%M %p."),
+            "actions": []
+        }
+
+    date_patterns = [
+        r"^what is today'?s date$",
+        r"^what'?s today'?s date$",
+        r"^what is the date$",
+        r"^what'?s the date$",
+        r"^today'?s date$",
+        r"^what day is it$",
+        r"^what is the date today$",
+        r"^what day is today$"
+    ]
+    if any(re.match(p, lower) for p in date_patterns) or lower in {"आज क्या तारीख है", "तारीख क्या है", "आज की तारीख क्या है", "आज कौन सा दिन है", "આજે કઈ તારીખ છે"}:
+        from datetime import datetime
+        now = datetime.now()
+        return {
+            "type": "chat",
+            "response": now.strftime("Today is %A, %B %d, %Y."),
             "actions": []
         }
 
@@ -279,29 +403,29 @@ def route_direct_command(user_message: str) -> Optional[Dict[str, Any]]:
             "actions": []
         }
 
-    # Hindi App Launching
-    if lower in {"कैलकुलेटर खोलो", "कैलकुलेटर चालू करो"}:
+    # Hindi & Gujarati App Launching
+    if lower in {"कैलकुलेटर खोलो", "कैलकुलेटर चालू करो", "કેલ્ક્યુલેટર ખોલો", "કેલ્ક્યુલેટર ચાલુ કરો"}:
         return {
             "type": "action",
             "response": "Opening Calculator.",
             "actions": [{"tool": "open_target", "arguments": {"target": "calculator"}}]
         }
 
-    if lower in {"नोटपैड खोलो", "नोटपैड चालू करो"}:
+    if lower in {"नोटपैड खोलो", "नोटपैड चालू करो", "નોટપેડ ખોલો", "નોટપેડ ચાલુ કરો"}:
         return {
             "type": "action",
             "response": "Opening Notepad.",
             "actions": [{"tool": "open_target", "arguments": {"target": "notepad"}}]
         }
 
-    if lower in {"पेंट खोलो", "पेंट चालू करो"}:
+    if lower in {"पेंट खोलो", "पेंट चालू करो", "પેઇન્ટ ખોલો"}:
         return {
             "type": "action",
             "response": "Opening Paint.",
             "actions": [{"tool": "open_target", "arguments": {"target": "paint"}}]
         }
 
-    if lower in {"स्क्रीनशॉट लो", "स्क्रीनशॉट खींचो"}:
+    if lower in {"स्क्रीनशॉट लो", "स्क्रीनशॉट खींचो", "સ્ક્રીનશોટ લો"}:
         return {
             "type": "action",
             "response": "Capturing desktop screenshot.",

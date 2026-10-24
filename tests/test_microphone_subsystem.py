@@ -6,9 +6,13 @@ and actionable capture error handling.
 """
 
 import os
+import sys
+from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import speech_recognition as sr
 from interfaces.voice import VoiceInterface, _GLOBAL_WHISPER_CACHE

@@ -179,8 +179,8 @@ def open_target(target: str, force_web: bool = False) -> str:
     if success:
         return message
 
-    # Search fallback
-    return search_web(target)
+    # Target not found as application or website
+    return f"Could not find application or website '{target}'."
 
 
 # Registry of callable tools (100% backward-compatible dictionary)

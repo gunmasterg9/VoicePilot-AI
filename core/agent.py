@@ -165,6 +165,15 @@ class OrionAgent:
         if len(self.conversation) > max_turns * 2:
             self.conversation = self.conversation[-(max_turns * 2):]
 
+    def _get_uncertainty_response(self) -> str:
+        """Returns language-aware clarification prompt for uncertain or ambiguous utterances."""
+        lang = settings.get("speech_language", "en")
+        if lang == "hi":
+            return "मुझे समझ नहीं आया। कृपया दोबारा बोलें।"
+        elif lang == "gu":
+            return "મને સમજાયું નથી. કૃપા કરીને ફરી પ્રયાસ કરો."
+        return "I didn't understand. Please try again."
+
 
     # ========================================================
     # VOICE COMMAND NORMALIZATION
@@ -211,6 +220,9 @@ class OrionAgent:
 
             # Applications
             "note pad": "notepad",
+            "screen shot": "screenshot",
+            "screen-shot": "screenshot",
+            "screen capture": "screenshot",
 
             "google chrome": "chrome",
 
@@ -343,6 +355,10 @@ class OrionAgent:
     def _open_known_application(self, target):
 
         key = self._normalize_voice_command(target)
+        if key.startswith("the "):
+            key = key[4:].strip()
+        elif key.startswith("a "):
+            key = key[2:].strip()
 
         command = KNOWN_APPLICATIONS.get(key)
 
@@ -754,9 +770,15 @@ class OrionAgent:
             " .!?,"
         )
 
-        # Remove a leading NEO wake phrase before matching direct commands.
+        # Remove a leading NEO wake phrase or polite prefix before matching direct commands.
         clean = re.sub(
             r"^(?:(?:hey|hello|hi|okay)\s+)?(?:neo|orion)[\s,:-]+",
+            "",
+            clean,
+            flags=re.IGNORECASE
+        ).strip()
+        clean = re.sub(
+            r"^(?:please\s+|can\s+you\s+(?:please\s+)?|could\s+you\s+(?:please\s+)?|would\s+you\s+(?:please\s+)?)",
             "",
             clean,
             flags=re.IGNORECASE
@@ -1186,12 +1208,16 @@ class OrionAgent:
         # ====================================================
 
         if clean in {
-
             "screenshot",
             "take screenshot",
             "take a screenshot",
             "capture screen",
             "capture the screen",
+            "screen shot",
+            "take a screen shot",
+            "स्क्रीनशॉट लो",
+            "स्क्रीनशॉट खींचो",
+            "સ્ક્રીનશોટ લો",
         }:
 
             tool = get_tool(
@@ -1569,7 +1595,7 @@ class OrionAgent:
             "stop", "cancel", "stop now", "cancel action", "halt", "abort",
             "stop speaking", "stop talking", "be quiet", "shut up",
             "stop audio", "stop voice", "silence", "cancel speech",
-            "रुक जाओ", "बंद करो", "शांत रहो"
+            "रुक जाओ", "बंद करो", "शांत रहो", "શાંત રહો", "રોકાઈ જાઓ"
         }:
             self.cancel_current_operation()
             return "Speech synthesis stopped and operations halted."
@@ -1580,7 +1606,7 @@ class OrionAgent:
         if clean in {
             "increase volume", "volume up", "turn up volume", "turn up the volume",
             "raise volume", "raise the volume", "increase the volume", "louder", "make it louder",
-            "आवाज़ बढ़ाओ", "वॉल्यूम बढ़ाओ", "आवाज बढ़ाओ"
+            "आवाज़ बढ़ाओ", "वॉल्यूम बढ़ाओ", "आवाज बढ़ाओ", "અવાજ વધારો"
         }:
             from tools.system import volume_up
             return volume_up(5)
@@ -1588,17 +1614,35 @@ class OrionAgent:
         if clean in {
             "decrease volume", "volume down", "turn down volume", "turn down the volume",
             "lower volume", "lower the volume", "decrease the volume", "quieter", "make it quieter",
-            "आवाज़ कम करो", "वॉल्यूम कम करो", "आवाज कम करो"
+            "आवाज़ कम करो", "वॉल्यूम कम करो", "आवाज कम करो", "અવાજ ઘટાડો"
         }:
             from tools.system import volume_down
             return volume_down(5)
 
         if clean in {
             "mute volume", "mute the volume", "mute", "unmute", "unmute volume",
-            "mute sound", "mute audio", "म्यूट करो", "आवाज़ म्यूट करो", "आवाज म्यूट करो"
+            "mute sound", "mute audio", "म्यूट करो", "आवाज़ म्यूट करो", "आवाज म्यूट करो", "અવાજ બંધ કરો"
         }:
             from tools.system import volume_mute
             return volume_mute()
+
+        # ====================================================
+        # HINDI & GUJARATI APP LAUNCHING
+        # ====================================================
+        if clean in {
+            "कैलकुलेटर खोलो", "कैलकुलेटर चालू करो", "કેલ્ક્યુલેટર ખોલો", "કેલ્ક્યુલેટર ચાલુ કરો"
+        }:
+            return self._open_known_application("calculator")
+
+        if clean in {
+            "नोटपैड खोलो", "नोटपैड चालू करो", "નોટપેડ ખોલો", "નોટપેડ ચાલુ કરો"
+        }:
+            return self._open_known_application("notepad")
+
+        if clean in {
+            "पेंट खोलो", "पेंट चालू करो", "પેઇન્ટ ખોલો"
+        }:
+            return self._open_known_application("paint")
 
         # ====================================================
         # AUDIO & JOKES
@@ -1692,7 +1736,18 @@ class OrionAgent:
                 return final_text
 
         # ----------------------------------------------------
-        # 3. ONLY UNKNOWN / OPEN-ENDED REQUESTS REACH OLLAMA
+        # 2.5. REJECT AMBIGUOUS OR GARBLED FRAGMENTS BEFORE OLLAMA
+        # ----------------------------------------------------
+        from core.router import CommandRouter, Intent
+        router = CommandRouter()
+        intent, _ = router.classify_intent(message)
+        if intent == Intent.AMBIGUOUS:
+            uncertainty_msg = self._get_uncertainty_response()
+            self._record_conversation(message, uncertainty_msg)
+            return uncertainty_msg
+
+        # ----------------------------------------------------
+        # 3. ONLY CLEAR UNKNOWN / OPEN-ENDED REQUESTS REACH OLLAMA
         # ----------------------------------------------------
         try:
             plan = ask_ollama(

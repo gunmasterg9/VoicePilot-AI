@@ -467,14 +467,14 @@ class VoiceWorker(QObject):
                 VoiceInterface
             )
 
-            voice = VoiceInterface(
+            self.voice = VoiceInterface(
                 self.agent,
                 output_callback=self.log.emit,
                 state_callback=self.state.emit
             )
 
             response = (
-                voice.process_voice_command()
+                self.voice.process_voice_command()
             )
 
             self.finished.emit(
@@ -491,6 +491,19 @@ class VoiceWorker(QObject):
             self.finished.emit(
                 f"NEO voice error: {exc}"
             )
+
+    def cancel(self):
+        """Signals cancellation to active voice pipeline."""
+        if hasattr(self, "voice") and self.voice:
+            try:
+                self.voice.cancel()
+            except Exception:
+                pass
+        if hasattr(self.agent, "cancel_current_operation"):
+            try:
+                self.agent.cancel_current_operation()
+            except Exception:
+                pass
 
 
 # ================================================================
@@ -2158,6 +2171,12 @@ class OrionWindow(QMainWindow):
     # ============================================================
 
     def stop_action(self):
+
+        if hasattr(self, "voice_worker") and self.voice_worker:
+            try:
+                self.voice_worker.cancel()
+            except Exception:
+                pass
 
         self.agent.cancel_current_operation()
         tts_manager.stop()

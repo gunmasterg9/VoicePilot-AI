@@ -8,7 +8,7 @@
     "llm_timeout": 60,
     "max_history_turns": 8,
     "whisper_model": "tiny",
-    "speech_language": "hi",
+    "speech_language": "en",
     "mic_device_index": 2,
     "mic_device_name": "Microphone Array (Realtek(R) Au",
     "mic_energy_threshold": 300,
